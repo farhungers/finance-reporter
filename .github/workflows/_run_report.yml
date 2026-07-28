@@ -1,0 +1,94 @@
+name: _run_report (reusable)
+
+# Reusable job invoked by daily_morning / daily_wrap / weekly_lookback / weekly_prep / daily_backup.
+# Persistence model: SQLite DB is stored in the `data-store` orphan branch.
+# Each run: fetch DB → run report → commit updated DB back.
+
+on:
+  workflow_call:
+    inputs:
+      report_type:
+        required: true
+        type: string
+      commit_db:
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      TELEGRAM_BOT_TOKEN:
+        required: true
+      TELEGRAM_CHAT_ID:
+        required: true
+      GROQ_API_KEY:
+        required: true
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write   # push updated DB to data-store branch
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Prepare data directory
+        run: mkdir -p data data/backups data/cache
+
+      - name: Restore DB from data-store branch
+        continue-on-error: true
+        run: |
+          if git ls-remote --exit-code --heads origin data-store >/dev/null 2>&1; then
+            git fetch origin data-store:data-store --depth=1
+            git show data-store:data/finance_reporter.db > data/finance_reporter.db || echo "no DB blob yet"
+          else
+            echo "data-store branch not yet created — this is the bootstrap run"
+          fi
+
+      - name: Run ${{ inputs.report_type }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          LLM_PROVIDER: groq
+          DRY_RUN: 'false'
+          KILL_SWITCH_DAILY_MORNING: 'false'
+          KILL_SWITCH_DAILY_WRAP: 'false'
+          KILL_SWITCH_WEEKLY_LOOKBACK: 'false'
+          KILL_SWITCH_WEEKLY_PREP: 'false'
+          PYTHONUNBUFFERED: '1'
+        run: python -m src.run_report ${{ inputs.report_type }}
+
+      - name: Commit DB back to data-store branch
+        if: ${{ inputs.commit_db && always() }}
+        env:
+          RT: ${{ inputs.report_type }}
+        run: |
+          set -e
+          test -f data/finance_reporter.db || { echo "no DB to commit"; exit 0; }
+          # Create an orphan branch payload (only the DB file — no source code churn)
+          TMPDIR=$(mktemp -d)
+          cp data/finance_reporter.db "$TMPDIR/finance_reporter.db"
+          cd "$TMPDIR"
+          git init -q -b data-store
+          git config user.email "bot@finance-reporter.local"
+          git config user.name  "finance-reporter-bot"
+          mkdir data
+          mv finance_reporter.db data/
+          git add data/finance_reporter.db
+          git commit -q -m "DB snapshot: $RT $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git push -f origin data-store

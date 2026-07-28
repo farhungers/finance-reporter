@@ -1,0 +1,18 @@
+name: daily_morning
+
+# 07:00 IST Mon-Fri = 04:00 UTC Mon-Fri (§B.4 locked).
+# GitHub Actions cron drift can add 5-15 min — the friend may see 07:12 IST some days.
+on:
+  schedule:
+    - cron: '0 4 * * 1-5'
+  workflow_dispatch:  # manual trigger for testing
+
+jobs:
+  run:
+    uses: ./.github/workflows/_run_report.yml
+    with:
+      report_type: daily_morning
+    secrets:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
