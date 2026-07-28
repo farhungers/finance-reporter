@@ -1,0 +1,16 @@
+name: _smoketest
+on:
+  workflow_dispatch:
+
+jobs:
+  hello:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Echo
+        run: echo "hello from GitHub Actions"
+      - name: Show secrets exist
+        env:
+          HAVE_TG: ${{ secrets.TELEGRAM_BOT_TOKEN != '' }}
+          HAVE_CHAT: ${{ secrets.TELEGRAM_CHAT_ID != '' }}
+          HAVE_GROQ: ${{ secrets.GROQ_API_KEY != '' }}
+        run: echo "TG=$HAVE_TG CHAT=$HAVE_CHAT GROQ=$HAVE_GROQ"
