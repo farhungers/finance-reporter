@@ -2,7 +2,7 @@ name: _run_report (reusable)
 
 # Reusable job invoked by daily_morning / daily_wrap / weekly_lookback / weekly_prep / daily_backup.
 # Persistence model: SQLite DB is stored in the `data-store` orphan branch.
-# Each run: fetch DB → run report → commit updated DB back.
+# Each run: fetch DB → run report → commit updated DB back (if it exists).
 
 on:
   workflow_call:
@@ -10,24 +10,13 @@ on:
       report_type:
         required: true
         type: string
-      commit_db:
-        required: false
-        type: boolean
-        default: true
-    secrets:
-      TELEGRAM_BOT_TOKEN:
-        required: true
-      TELEGRAM_CHAT_ID:
-        required: true
-      GROQ_API_KEY:
-        required: true
 
 jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: write   # push updated DB to data-store branch
+      contents: write
     steps:
       - name: Checkout main
         uses: actions/checkout@v4
@@ -73,13 +62,14 @@ jobs:
         run: python -m src.run_report ${{ inputs.report_type }}
 
       - name: Commit DB back to data-store branch
-        if: ${{ inputs.commit_db && always() }}
-        env:
-          RT: ${{ inputs.report_type }}
+        if: always()
         run: |
           set -e
-          test -f data/finance_reporter.db || { echo "no DB to commit"; exit 0; }
-          # Create an orphan branch payload (only the DB file — no source code churn)
+          if [ ! -f data/finance_reporter.db ]; then
+            echo "no DB file to commit"
+            exit 0
+          fi
+          RT="${{ inputs.report_type }}"
           TMPDIR=$(mktemp -d)
           cp data/finance_reporter.db "$TMPDIR/finance_reporter.db"
           cd "$TMPDIR"
