@@ -1,9 +1,10 @@
 name: daily_wrap
 
-# 19:00 IST Mon-Fri = 16:00 UTC Mon-Fri (§B.4 locked).
+# ~19:00 IST Mon-Fri (16:07 UTC). Off-peak minute per §B.4: top-of-hour crons
+# on GitHub Actions get silently deferred/dropped under load. Friend sees 19:07-19:22 IST.
 on:
   schedule:
-    - cron: '0 16 * * 1-5'
+    - cron: '7 16 * * 1-5'
   workflow_dispatch:
 
 permissions:

@@ -25,11 +25,14 @@ TZ_IST = ZoneInfo("Europe/Istanbul")   # display TZ inside every report body
 TZ_ET = ZoneInfo("America/New_York")   # market reference ONLY — never in report text
 
 # --- cron schedule (UTC, LOCKED) -----------------------------------------
-CRON_DAILY_MORNING = "0 4 * * 1-5"     # 04:00 UTC Mon-Fri = 07:00 IST
-CRON_DAILY_WRAP = "0 16 * * 1-5"       # 16:00 UTC Mon-Fri = 19:00 IST
-CRON_WEEKLY_LOOKBACK = "0 13 * * 6"    # 13:00 UTC Sat = 16:00 IST Sat
-CRON_WEEKLY_PREP = "0 13 * * 0"        # 13:00 UTC Sun = 16:00 IST Sun
-CRON_DAILY_BACKUP = "30 3 * * *"       # 03:30 UTC daily — 30 min before morning cron (§E.24)
+# Minute shifted off :00/:30 per §B.4: GitHub Actions defers/drops top-of-hour
+# crons under load. GH Actions is now the live scheduler; these constants mirror
+# the workflow YAML for the (currently unused) APScheduler path in main.py.
+CRON_DAILY_MORNING = "7 4 * * 1-5"     # ~07:07 IST weekdays
+CRON_DAILY_WRAP = "7 16 * * 1-5"       # ~19:07 IST weekdays
+CRON_WEEKLY_LOOKBACK = "7 13 * * 6"    # ~16:07 IST Sat
+CRON_WEEKLY_PREP = "7 13 * * 0"        # ~16:07 IST Sun
+CRON_DAILY_BACKUP = "37 3 * * *"       # 03:37 UTC daily — 30 min before morning cron (§E.24)
 
 # --- env-derived flags ---------------------------------------------------
 def _bool(name: str, default: bool = False) -> bool:

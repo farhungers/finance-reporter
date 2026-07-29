@@ -140,12 +140,19 @@ TZ_UTC = ZoneInfo("UTC")
 TZ_IST = ZoneInfo("Europe/Istanbul")     # display TZ inside every report body
 TZ_ET  = ZoneInfo("America/New_York")    # market reference only — NOT displayed in reports
 
-# Schedule (all in UTC — the ONLY canonical scheduling timezone):
-CRON_DAILY_MORNING     = "0 4 * * 1-5"    # 04:00 UTC Mon-Fri = 07:00 IST weekdays
-CRON_DAILY_WRAP        = "0 16 * * 1-5"   # 16:00 UTC Mon-Fri = 19:00 IST weekdays
-CRON_WEEKLY_LOOKBACK   = "0 13 * * 6"     # 13:00 UTC Sat = 16:00 IST Saturday
-CRON_WEEKLY_PREP       = "0 13 * * 0"     # 13:00 UTC Sun = 16:00 IST Sunday
+# Schedule (all in UTC — the ONLY canonical scheduling timezone).
+# Minute is 7/37 not 0/30: GitHub Actions defers/drops top-of-hour crons under load
+# (2026-07-29 incident — every :00 and :30 cron missed its first scheduled fire).
+# Off-peak minute keeps delivery inside the promised IST window with headroom for
+# the additional 5-15 min GH Actions drift documented in each workflow.
+CRON_DAILY_MORNING     = "7 4 * * 1-5"    # ~07:07 IST weekdays
+CRON_DAILY_WRAP        = "7 16 * * 1-5"   # ~19:07 IST weekdays
+CRON_WEEKLY_LOOKBACK   = "7 13 * * 6"     # ~16:07 IST Saturday
+CRON_WEEKLY_PREP       = "7 13 * * 0"     # ~16:07 IST Sunday
 ```
+GitHub Actions is the live scheduler (workflow YAML in `.github/workflows/`);
+`src/config.py` mirrors these for the currently unused `src/main.py` APScheduler path.
+When editing, keep the two in sync.
 
 **Every timestamp displayed in a report body MUST be Istanbul time** (Europe/Istanbul) with the label ` IST`. Operator preference, locked 2026-07-28 (point 1 of the 8-point walkthrough). Do not mix ET and IST in a single message body. ET is used only for internal market-reference calculations (e.g., "is US market open right now for this trade timestamp"); it never appears in report text.
 

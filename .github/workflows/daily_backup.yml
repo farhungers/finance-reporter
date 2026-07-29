@@ -1,10 +1,11 @@
 name: daily_backup
 
-# 03:30 UTC daily — 30 min before daily_morning (§E.24 backup discipline).
+# 03:37 UTC daily — 30 min before daily_morning (§E.24 backup discipline).
+# Off-peak minute per §B.4 (top-of-hour crons get deferred/dropped on GH Actions).
 # Also mirrors the current DB snapshot to farhungers/finance-reporter-backups.
 on:
   schedule:
-    - cron: '30 3 * * *'
+    - cron: '37 3 * * *'
   workflow_dispatch:
 
 permissions:

@@ -1,9 +1,9 @@
 name: weekly_prep
 
-# 16:00 IST Sunday = 13:00 UTC Sunday (§B.4 locked).
+# ~16:00 IST Sunday (13:07 UTC). Off-peak minute per §B.4.
 on:
   schedule:
-    - cron: '0 13 * * 0'
+    - cron: '7 13 * * 0'
   workflow_dispatch:
 
 permissions:
