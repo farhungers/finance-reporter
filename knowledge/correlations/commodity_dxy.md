@@ -1,6 +1,6 @@
 ---
 topic_tags: [correlations, commodities, dxy, dollar]
-applies_to_reports: [daily_morning, weekly_prep]
+applies_to_reports: [weekly_prep]
 last_reviewed: 2026-07-29
 provenance: "curated 2026-07-29 from established commodity-macro literature (Roubini, Rogers) + FX-commodity correlation practice"
 ---

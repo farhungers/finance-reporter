@@ -1,6 +1,6 @@
 ---
 topic_tags: [blue_chip, abbv]
-applies_to_reports: [daily_morning, weekly_prep]
+applies_to_reports: []
 last_reviewed: 2026-07-29
 provenance: "operator-curated 2026-07-29 from public filings + analyst consensus"
 ---

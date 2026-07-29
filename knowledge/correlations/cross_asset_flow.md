@@ -1,6 +1,6 @@
 ---
 topic_tags: [correlations, cross_asset, risk_on_risk_off]
-applies_to_reports: [daily_morning, weekly_prep]
+applies_to_reports: [weekly_prep]
 last_reviewed: 2026-07-29
 provenance: "curated 2026-07-29 from established macro literature (Bridgewater All Weather, Ilmanen) + cross-asset flow practice"
 ---

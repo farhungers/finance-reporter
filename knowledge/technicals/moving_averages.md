@@ -1,6 +1,6 @@
 ---
 topic_tags: [technicals, moving_averages, trend]
-applies_to_reports: [daily_morning, weekly_prep]
+applies_to_reports: [weekly_prep]
 last_reviewed: 2026-07-29
 provenance: "curated 2026-07-29 from established trend-following literature (Covel, Faith) + moving-average base-rate studies"
 ---

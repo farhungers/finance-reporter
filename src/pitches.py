@@ -131,6 +131,40 @@ The Python layer will:
 """
 
 
+def _rotating_ticker_sample(date_ist: str, size: int = 5) -> list[str]:
+    """Deterministic day-seeded rotating slice — sampled from *populated* ticker
+    fact files only, so the LLM always gets real context (not stubs). Same date
+    → same sample, but different days rotate through the populated set. Keeps
+    per-report token load bounded (~15KB max at size=5) so we stay comfortably
+    under Groq's 12K TPM cap."""
+    populated = _populated_tickers()
+    n = len(populated)
+    if n == 0 or size >= n:
+        return populated
+    try:
+        doy = datetime.strptime(date_ist, "%Y-%m-%d").timetuple().tm_yday
+    except Exception:
+        doy = 0
+    start = (doy * size) % n
+    end = start + size
+    if end <= n:
+        return populated[start:end]
+    return populated[start:] + populated[: end - n]
+
+
+def _populated_tickers() -> list[str]:
+    """Return the subset of BLUE_CHIP_UNIVERSE whose facts file is not a stub."""
+    out: list[str] = []
+    for t in BLUE_CHIP_UNIVERSE:
+        p = config.KNOWLEDGE_DIR / "blue_chip" / f"{t}_facts.md"
+        if not p.exists():
+            continue
+        chunk = knowledge._read_chunk(p)
+        if chunk is not None and not knowledge._is_stub(chunk):
+            out.append(t)
+    return out
+
+
 def _build_user_prompt(
     date_ist: str,
     calendar_summary: str,
@@ -178,10 +212,13 @@ def generate(
     report_type: str = "daily_morning",
 ) -> tuple[list[Pitch], dict[str, int]]:
     """Return (pitches, token_counts). Persists each pitch to DB BEFORE any send."""
-    # Load knowledge context for ALL universe tickers — the LLM chooses 3 but sees
-    # its options. This keeps context size ~200 tickers × short stubs, well inside
-    # Gemini's 1M context window.
-    kb = knowledge.load_for_report(report_type, tickers=list(BLUE_CHIP_UNIVERSE))
+    # Rotating ticker-facts sample: pass a day-seeded slice of the universe so
+    # different tickers receive deep-context exposure over the week. Groq TPM cap
+    # (12K/min) forces this trim; without it, 25+ populated ticker files blow the
+    # budget. LLM still receives the full universe list in the system prompt and
+    # can pitch any ticker — sampled ones just get the extra facts as context.
+    ticker_sample = _rotating_ticker_sample(date_ist, size=5)
+    kb = knowledge.load_for_report(report_type, tickers=ticker_sample)
     kb_ctx = knowledge.build_context_block(kb)
 
     # Compute earnings flags for the full universe (or a targeted subset — for now, full).

@@ -1,6 +1,6 @@
 ---
 topic_tags: [correlations, seasonality, calendar_effects]
-applies_to_reports: [daily_morning, weekly_prep]
+applies_to_reports: [weekly_prep]
 last_reviewed: 2026-07-29
 provenance: "curated 2026-07-29 from established seasonality literature (Stock Trader's Almanac, academic anomaly studies) + surviving-anomaly analysis"
 ---

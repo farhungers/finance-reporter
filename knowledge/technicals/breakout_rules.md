@@ -1,6 +1,6 @@
 ---
 topic_tags: [technicals, breakouts, volume]
-applies_to_reports: [daily_morning, weekly_prep]
+applies_to_reports: [weekly_prep]
 last_reviewed: 2026-07-29
 provenance: "curated 2026-07-29 from established breakout literature (O'Neil, Minervini) + intraday market-microstructure studies"
 ---

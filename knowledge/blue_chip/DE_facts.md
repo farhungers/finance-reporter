@@ -1,6 +1,6 @@
 ---
 topic_tags: [blue_chip, de]
-applies_to_reports: [daily_morning, weekly_prep]
+applies_to_reports: []
 last_reviewed: 2026-07-28
 provenance: "stub scaffold — populate as knowledge accumulates"
 ---

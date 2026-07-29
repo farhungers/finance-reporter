@@ -1,6 +1,6 @@
 ---
 topic_tags: [correlations, sector_rotation, cycle]
-applies_to_reports: [daily_morning, weekly_prep]
+applies_to_reports: [weekly_prep]
 last_reviewed: 2026-07-29
 provenance: "curated 2026-07-29 from established cycle literature (Sam Stovall sector rotation, Fidelity business-cycle model) + relative-strength practice"
 ---
