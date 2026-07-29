@@ -1,0 +1,93 @@
+name: heartbeat_daily_wrap
+
+# 16:53 UTC Mon-Fri — 46 min after daily_wrap's 16:07 target (clear of the
+# documented 5-15 min GH Actions drift window). Checks report_sends in the DB;
+# if no successful daily_wrap row for today, fires the report as fallback.
+# Note: if a primary succeeded but its DB commit step failed, this can duplicate.
+on:
+  schedule:
+    - cron: '53 16 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check_and_maybe_run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Prepare data dirs
+        run: mkdir -p data data/backups data/cache
+      - name: Restore DB from data-store branch
+        continue-on-error: true
+        run: |
+          if git ls-remote --exit-code --heads origin data-store >/dev/null 2>&1; then
+            git fetch origin data-store:data-store --depth=1
+            git show data-store:data/finance_reporter.db > data/finance_reporter.db || echo "no DB blob yet"
+          else
+            echo "data-store branch not yet created — bootstrap run"
+          fi
+      - name: Check if daily_wrap already sent today
+        id: check
+        run: |
+          if [ ! -f data/finance_reporter.db ]; then
+            echo "no DB — treating as MISSED"
+            echo "missed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          TODAY=$(date -u +%Y-%m-%d)
+          COUNT=$(sqlite3 data/finance_reporter.db \
+            "SELECT COUNT(*) FROM report_sends
+             WHERE report_type='daily_wrap'
+             AND sent_at LIKE '${TODAY}%'
+             AND telegram_message_id IS NOT NULL;")
+          if [ "$COUNT" -eq 0 ]; then
+            echo "daily_wrap MISSED today (${TODAY}) — firing fallback"
+            echo "missed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "daily_wrap already sent today (${TODAY}), count=${COUNT} — skipping"
+            echo "missed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run daily_wrap (fallback)
+        if: steps.check.outputs.missed == 'true'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          LLM_PROVIDER: groq
+          DRY_RUN: 'false'
+          KILL_SWITCH_DAILY_WRAP: 'false'
+          PYTHONUNBUFFERED: '1'
+        run: python -m src.run_report daily_wrap
+      - name: Commit DB to data-store branch
+        if: steps.check.outputs.missed == 'true'
+        run: |
+          set -e
+          if [ ! -f data/finance_reporter.db ]; then
+            echo "no DB file to commit"
+            exit 0
+          fi
+          TMPDIR=$(mktemp -d)
+          cp data/finance_reporter.db "$TMPDIR/finance_reporter.db"
+          cd "$TMPDIR"
+          git init -q -b data-store
+          git config user.email "bot@finance-reporter.local"
+          git config user.name  "finance-reporter-bot"
+          mkdir data
+          mv finance_reporter.db data/
+          git add data/finance_reporter.db
+          git commit -q -m "DB snapshot: heartbeat_daily_wrap $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git push -f origin data-store
