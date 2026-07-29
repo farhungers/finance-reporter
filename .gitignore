@@ -19,3 +19,6 @@ data/cache/
 htmlcov/
 .DS_Store
 Thumbs.db
+
+# Source books — used for knowledge extraction, not for distribution
+knowledge/_source_books/
