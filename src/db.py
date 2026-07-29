@@ -102,6 +102,15 @@ CREATE TABLE IF NOT EXISTS feedback_reactions (
   note TEXT
 );
 
+-- Cursor for the /stats poller: highest processed Telegram update_id.
+-- Prevents replay across poller runs. Additive per §B.5.
+CREATE TABLE IF NOT EXISTS telegram_updates_seen (
+  update_id INTEGER PRIMARY KEY,
+  seen_at TEXT NOT NULL,
+  chat_id TEXT,
+  command TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_pitches_resolved ON pitches(resolution);
 CREATE INDEX IF NOT EXISTS idx_trades_resolved ON trades(resolution);
 CREATE INDEX IF NOT EXISTS idx_calendar_date ON calendar_events(event_date);
