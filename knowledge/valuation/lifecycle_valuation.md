@@ -1,6 +1,6 @@
 ---
 topic_tags: [valuation, lifecycle, young_company, growth_company, mature_company, declining_company]
-applies_to_reports: [daily_morning, weekly_prep, weekly_lookback]
+applies_to_reports: [weekly_prep, weekly_lookback]
 last_reviewed: 2026-07-29
 provenance: "Damodaran, The Little Book of Valuation (2024 ed.), Chs 6-9 'Promise Aplenty' (Airbnb), 'Growing Pains' (Alphabet), 'Valuation Viagra' (Unilever), 'Doomsday' (Bed Bath & Beyond), pp 195-275 (approx)"
 ---

@@ -1,6 +1,6 @@
 ---
 topic_tags: [valuation, dcf, intrinsic_value, cost_of_capital, terminal_value]
-applies_to_reports: [daily_morning, weekly_prep, weekly_lookback]
+applies_to_reports: [weekly_prep, weekly_lookback]
 last_reviewed: 2026-07-29
 provenance: "Damodaran, The Little Book of Valuation (2024 ed.), Ch 3 'Yes, Virginia, Every Asset Has an Intrinsic Value', pp 41-130"
 ---

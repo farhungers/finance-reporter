@@ -1,11 +1,15 @@
 """Groq Llama 3.3 70B fallback provider — config swap only.
 
-Free tier: 30 RPM. Switch by setting LLM_PROVIDER=groq in .env.
+Free tier: 30 RPM, 12K TPM. Switch by setting LLM_PROVIDER=groq in .env.
+Weekly reports can exceed 12K TPM in a single call once the knowledge library
+is populated; we handle 429s by sleeping the retry-after window before retry.
 """
 from __future__ import annotations
 
 import json
 import logging
+import re
+import time
 from typing import Any
 
 from src.llm_providers.base import GenerateResult, Provider
@@ -13,6 +17,31 @@ from src.llm_providers.base import GenerateResult, Provider
 log = logging.getLogger(__name__)
 
 _MODEL_NAME = "llama-3.3-70b-versatile"
+_MAX_RATE_LIMIT_SLEEP = 90  # cap in seconds — protects the 10-min workflow timeout
+
+
+def _parse_retry_after(err: Exception) -> float | None:
+    """Extract the retry-after hint from a Groq rate-limit error.
+
+    Groq surfaces this either as an HTTP header on the exception's response
+    or embedded in the error message ("Please try again in Xs"). Return None
+    if we can't find it; caller uses a default backoff."""
+    resp = getattr(err, "response", None)
+    if resp is not None:
+        headers = getattr(resp, "headers", None) or {}
+        for k in ("retry-after", "Retry-After", "x-ratelimit-reset-tokens", "x-ratelimit-reset-requests"):
+            v = headers.get(k) if hasattr(headers, "get") else None
+            if v:
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    m = re.search(r"([\d.]+)s?", str(v))
+                    if m:
+                        return float(m.group(1))
+    m = re.search(r"try again in ([\d.]+)\s*s", str(err))
+    if m:
+        return float(m.group(1))
+    return None
 
 
 class GroqProvider(Provider):
@@ -40,7 +69,7 @@ class GroqProvider(Provider):
             f"```json\n{schema_hint}\n```"
         )
         last_error: Exception | None = None
-        for attempt in range(2):
+        for attempt in range(3):
             try:
                 resp = self._client.chat.completions.create(
                     model=self._model,
@@ -63,5 +92,17 @@ class GroqProvider(Provider):
                 )
             except Exception as e:
                 last_error = e
+                err_str = str(e).lower()
+                is_rate_limit = "rate_limit" in err_str or "429" in err_str or "tokens per minute" in err_str
+                if is_rate_limit and attempt < 2:
+                    hint = _parse_retry_after(e)
+                    sleep_s = min(_MAX_RATE_LIMIT_SLEEP, max(60.0, hint or 60.0))
+                    log.warning(
+                        "groq rate-limited (attempt %d); sleeping %.1fs before retry",
+                        attempt + 1,
+                        sleep_s,
+                    )
+                    time.sleep(sleep_s)
+                    continue
                 log.warning("groq attempt %d failed: %s", attempt + 1, e)
-        raise RuntimeError(f"groq failed after retry: {last_error}")
+        raise RuntimeError(f"groq failed after retries: {last_error}")

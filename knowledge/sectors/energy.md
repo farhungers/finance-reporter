@@ -1,6 +1,6 @@
 ---
 topic_tags: [sector, energy, oil, gas, cyclicals, commodities]
-applies_to_reports: [daily_morning, weekly_prep, weekly_lookback]
+applies_to_reports: [weekly_prep, weekly_lookback]
 last_reviewed: 2026-07-29
 provenance: "Damodaran, The Little Book of Valuation (2024 ed.), Ch 11 'Roller Coaster Investing' (Shell case) pp 300-325; sector convention notes"
 ---
