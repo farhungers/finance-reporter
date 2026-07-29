@@ -1,6 +1,21 @@
 """Knowledge loader — CLAUDE.md §D.7. Applies_to_reports filter, ticker facts, always-included files."""
-from src import knowledge
+import pytest
+
+from src import config, knowledge
 from src.market_data import BLUE_CHIP_UNIVERSE
+
+
+def _find_stub_ticker() -> str | None:
+    """Find the first blue-chip ticker whose facts file is still a stub. Returns
+    None if every ticker has been populated (a happy problem — test skips)."""
+    for t in BLUE_CHIP_UNIVERSE:
+        p = config.KNOWLEDGE_DIR / "blue_chip" / f"{t}_facts.md"
+        if not p.exists():
+            continue
+        chunk = knowledge._read_chunk(p)
+        if chunk is not None and knowledge._is_stub(chunk):
+            return t
+    return None
 
 
 def test_load_returns_house_view_active_themes_always():
@@ -18,18 +33,18 @@ def test_load_omits_client_language_for_wrap():
     assert not any("client_language.md" in sid for sid in out)
 
 
-def test_load_skips_stub_ticker_facts(tmp_path):
+def test_load_skips_stub_ticker_facts():
     """Stub-scaffold ticker facts are correctly skipped by load_for_report to
     conserve LLM tokens. §E.19 presence check uses verify_blue_chip_coverage
     (file existence), not load_for_report (content quality)."""
-    ticker = BLUE_CHIP_UNIVERSE[0]
+    ticker = _find_stub_ticker()
+    if ticker is None:
+        pytest.skip("no stub ticker files remain — every blue-chip is populated")
     out = knowledge.load_for_report("daily_morning", tickers=[ticker])
-    # As of Session 0, all blue_chip files are stubs, so none should appear here.
     assert not any(f"blue_chip/{ticker}_facts.md" in sid for sid in out), (
         "stub ticker fact leaked into LLM context — over-eager to conserve tokens? "
         "Verify stub-detection heuristic in knowledge._is_stub"
     )
-    # But the file must still exist for §E.19 enforcement
     present, missing = knowledge.verify_blue_chip_coverage((ticker,))
     assert present == [ticker]
     assert missing == []
