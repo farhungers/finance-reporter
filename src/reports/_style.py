@@ -59,7 +59,8 @@ def section_banner(number: int | None, emoji: str, title: str, subtitle: str | N
         label = f"{emoji}  *SECTION {number} · {esc(title)}*"
     if subtitle:
         label = f"{label}  _· {esc(subtitle)}_"
-    return f"{HR}\n{label}\n{HR}"
+    # Leading blank line = breathing room between sections on mobile.
+    return f"\n{HR}\n{label}\n{HR}"
 
 
 def report_header(emoji: str, title: str, subtitle: str) -> str:
