@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Optional
 
 log = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ def _yf_next_earnings(ticker: str) -> Optional[date]:
         try:
             ed = t.earnings_dates
             if ed is not None and len(ed) > 0:
-                today = datetime.utcnow().date()
+                today = datetime.now(UTC).date()
                 future = [d for d in ed.index if d.date() >= today]
                 if future:
                     return min(future).date()

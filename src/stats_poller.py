@@ -13,7 +13,7 @@ import json
 import logging
 import re
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Optional
 
 import requests
@@ -55,7 +55,7 @@ def _record_seen(update_id: int, chat_id: Optional[str], command: Optional[str])
     with db.connect() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO telegram_updates_seen (update_id, seen_at, chat_id, command) VALUES (?,?,?,?)",
-            (update_id, datetime.utcnow().isoformat(timespec="seconds") + "Z", chat_id, command),
+            (update_id, datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"), chat_id, command),
         )
 
 
@@ -123,7 +123,7 @@ def _record_send(chat_id: Optional[str], message_id: Optional[int], char_count: 
             VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (
                 "stats_reply",
-                datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 message_id,
                 char_count,
                 char_count / 1200.0,

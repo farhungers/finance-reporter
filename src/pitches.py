@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Optional
 
 from src import config, db, knowledge, llm_client, rubric
@@ -232,7 +232,7 @@ def generate(
         )
 
     # Persist BEFORE send (§C10, §E.5)
-    now_utc = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    now_utc = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     with db.connect() as conn:
         cur = conn.cursor()
         for pi in pitches:

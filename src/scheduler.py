@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import shutil
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable
 
@@ -32,7 +32,7 @@ def _record_send(report_type: str, text: str, message_id: int | None, telemetry:
             VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (
                 report_type,
-                datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 message_id,
                 len(text),
                 read_min,
@@ -64,7 +64,7 @@ def _backup_db() -> None:
     src_p = Path(str(config.DB_PATH))
     if not src_p.exists():
         return
-    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     dst = config.BACKUP_DIR / f"{ts}_finance_reporter.db"
     config.BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     try:
@@ -85,7 +85,7 @@ def _backup_db() -> None:
 def _prune_backups(retention_days: int = 30) -> None:
     if not config.BACKUP_DIR.exists():
         return
-    cutoff = datetime.now(timezone.utc).timestamp() - retention_days * 86400
+    cutoff = datetime.now(UTC).timestamp() - retention_days * 86400
     for f in config.BACKUP_DIR.glob("*_finance_reporter.db"):
         try:
             if f.stat().st_mtime < cutoff:

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Optional
 
 from src import db
@@ -52,7 +52,7 @@ def _trading_days_between(d0: date, d1: date) -> int:
 def resolve_open_positions(as_of: Optional[datetime] = None) -> tuple[int, int]:
     """Resolve still-open trades and pitches. Returns (n_trades_resolved, n_pitches_resolved).
     Append-only: never rewrites an already-resolved row."""
-    as_of = as_of or datetime.utcnow()
+    as_of = as_of or datetime.now(UTC)
     n_trades = _resolve_trades(as_of)
     n_pitches = _resolve_pitches(as_of)
     return n_trades, n_pitches
@@ -82,7 +82,7 @@ def _resolve_trades(as_of: datetime) -> int:
             resolution, realized_r = hit
             conn.execute(
                 """UPDATE trades SET resolved_at=?, resolution=?, realized_r=? WHERE id=?""",
-                (as_of.isoformat(timespec="seconds") + "Z", resolution, realized_r, r["id"]),
+                (as_of.strftime("%Y-%m-%dT%H:%M:%SZ"), resolution, realized_r, r["id"]),
             )
             n += 1
     return n
@@ -118,7 +118,7 @@ def _resolve_pitches(as_of: datetime) -> int:
 
             conn.execute(
                 """UPDATE pitches SET resolved_at=?, resolution=?, realized_pct=? WHERE id=?""",
-                (as_of.isoformat(timespec="seconds") + "Z", resolution, pct, r["id"]),
+                (as_of.strftime("%Y-%m-%dT%H:%M:%SZ"), resolution, pct, r["id"]),
             )
             n += 1
     return n
@@ -205,8 +205,8 @@ def stats_snapshot() -> Stats:
             """SELECT id, asset_symbol, asset_class, direction, entry, tp, sl, generated_at
             FROM trades WHERE resolution IS NULL OR resolution='still_open' ORDER BY generated_at DESC LIMIT 10"""
         ):
-            gen = datetime.fromisoformat(row["generated_at"].replace("Z", ""))
-            age = (datetime.utcnow() - gen).days
+            gen = datetime.fromisoformat(row["generated_at"].replace("Z", "+00:00"))
+            age = (datetime.now(UTC) - gen).days
             s.open_positions.append({
                 "kind": "trade",
                 "symbol": row["asset_symbol"],
@@ -219,8 +219,8 @@ def stats_snapshot() -> Stats:
             """SELECT id, asset_symbol, direction, generated_at, star_rating
             FROM pitches WHERE resolution IS NULL OR resolution='still_open' ORDER BY generated_at DESC LIMIT 10"""
         ):
-            gen = datetime.fromisoformat(row["generated_at"].replace("Z", ""))
-            age = (datetime.utcnow() - gen).days
+            gen = datetime.fromisoformat(row["generated_at"].replace("Z", "+00:00"))
+            age = (datetime.now(UTC) - gen).days
             s.open_positions.append({
                 "kind": "pitch",
                 "symbol": row["asset_symbol"],

@@ -9,7 +9,7 @@ import logging
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -62,7 +62,7 @@ def _parse_ff_datetime(date_str: str, time_str: str) -> Optional[datetime]:
 def _cache_path() -> Path:
     cache_dir = config.DATA_DIR / "cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    return cache_dir / f"ff_calendar_{datetime.utcnow().strftime('%Y%m%d')}.xml"
+    return cache_dir / f"ff_calendar_{datetime.now(UTC).strftime('%Y%m%d')}.xml"
 
 
 def fetch_week(force: bool = False) -> list[CalendarEvent]:

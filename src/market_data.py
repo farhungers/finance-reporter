@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Optional
 
 import requests
@@ -75,7 +75,7 @@ def yf_history(symbol: str, days: int = 30) -> list[tuple[date, float, float, fl
     except ImportError:
         return []
     try:
-        end = datetime.utcnow().date()
+        end = datetime.now(UTC).date()
         start = end - timedelta(days=days * 2)  # buffer for weekends
         df = yf.Ticker(symbol).history(start=start.isoformat(), end=(end + timedelta(days=1)).isoformat())
         out = []
