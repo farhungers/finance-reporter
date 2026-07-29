@@ -1,0 +1,80 @@
+name: heartbeat_daily_backup
+
+# 05:53 UTC daily — 2h 16min after daily_backup's 03:37 target (clear of the
+# documented 5-15 min GH Actions drift window AND after daily_morning at 04:07
+# has written its updates to the DB).
+# Unconditional re-run: force-pushes latest DB snapshot to the mirror repo.
+# Cheap on free tier, idempotent, robust against scheduled-cron drops
+# (documented 2026-07-29 incident: primary daily_backup cron did not fire
+# despite the workflow being registered and healthy on manual dispatch).
+on:
+  schedule:
+    - cron: '53 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Prepare data dirs
+        run: mkdir -p data data/backups data/cache
+      - name: Restore DB from data-store branch
+        continue-on-error: true
+        run: |
+          if git ls-remote --exit-code --heads origin data-store >/dev/null 2>&1; then
+            git fetch origin data-store:data-store --depth=1
+            git show data-store:data/finance_reporter.db > data/finance_reporter.db || echo "no DB blob yet"
+          else
+            echo "data-store branch not yet created — bootstrap run"
+          fi
+      - name: Run backup (SQLite .backup + prune old)
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          PYTHONUNBUFFERED: '1'
+        run: python -m src.run_report backup
+      - name: Mirror to backups repo
+        env:
+          BACKUP_REPO_PAT: ${{ secrets.BACKUP_REPO_PAT }}
+        run: |
+          set -e
+          if [ ! -f data/finance_reporter.db ]; then
+            echo "no DB file to mirror"
+            exit 0
+          fi
+          if [ -z "$BACKUP_REPO_PAT" ]; then
+            echo "BACKUP_REPO_PAT secret not set — skipping mirror to backups repo"
+            exit 0
+          fi
+          TMPDIR=$(mktemp -d)
+          cp data/finance_reporter.db "$TMPDIR/finance_reporter.db"
+          if [ -d data/backups ]; then
+            cp -r data/backups "$TMPDIR/backups"
+          fi
+          cd "$TMPDIR"
+          git init -q -b main
+          git config user.email "bot@finance-reporter.local"
+          git config user.name  "finance-reporter-bot"
+          mkdir -p data
+          mv finance_reporter.db data/
+          if [ -d backups ]; then
+            mv backups data/
+          fi
+          git add data/
+          git commit -q -m "backup snapshot (heartbeat): $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          git remote add origin "https://x-access-token:$BACKUP_REPO_PAT@github.com/farhungers/finance-reporter-backups.git"
+          git push -f origin main
