@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from src.telegram_send import esc
 
-HR = "━" * 22   # heavy section divider
-MINI = "╌" * 22  # light card separator
+HR = "═" * 13    # double-line section divider (mobile-safe width; ~40% narrower than v1)
+MINI = "╌" * 13  # light card separator (mobile-safe width)
 
 COUNTRY_FLAG = {
     "USD": "🇺🇸", "EUR": "🇪🇺", "GBP": "🇬🇧", "JPY": "🇯🇵", "CHF": "🇨🇭",
