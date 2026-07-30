@@ -15,6 +15,26 @@ log = logging.getLogger(__name__)
 
 _MODEL_NAME = "gemini-2.5-flash"
 
+# Fields Gemini's schema dialect rejects. Strip recursively before send.
+_GEMINI_UNSUPPORTED_KEYS = {
+    "maxItems", "minItems", "maxLength", "minLength",
+    "maxProperties", "minProperties", "pattern", "patternProperties",
+    "additionalProperties", "$schema", "$id", "$ref", "definitions",
+    "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+    "allOf", "anyOf", "oneOf", "not", "if", "then", "else",
+}
+
+
+def _sanitize_schema(node: Any) -> Any:
+    if isinstance(node, dict):
+        return {
+            k: _sanitize_schema(v) for k, v in node.items()
+            if k not in _GEMINI_UNSUPPORTED_KEYS
+        }
+    if isinstance(node, list):
+        return [_sanitize_schema(x) for x in node]
+    return node
+
 
 class GeminiProvider(Provider):
     name = "gemini"
@@ -40,9 +60,13 @@ class GeminiProvider(Provider):
             system_instruction=system,
         )
         # Structured output: mime=json + schema constrains the model's output.
+        # Gemini's schema dialect is an OpenAPI subset — strip fields it rejects
+        # (maxItems, minItems, etc.) so callers can pass full JSON Schema and we
+        # gracefully downgrade. Bullet-count discipline moves into the system
+        # prompt when maxItems is stripped.
         gen_config = {
             "response_mime_type": "application/json",
-            "response_schema": response_schema,
+            "response_schema": _sanitize_schema(response_schema),
             "temperature": 0.4,
         }
         last_error: Exception | None = None
