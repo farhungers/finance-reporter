@@ -1,7 +1,8 @@
-"""Daily Wrap — 19:00 IST Mon-Fri (CLAUDE.md §D.1.b).
+"""Daily Wrap — 16:00 IST Mon-Fri (CLAUDE.md §D.1.b, updated 2026-07-30).
 
-~1 min read (~400 tokens display). 19:00 IST = 12:00 ET, mid-US session.
-Uses the shared visual language from src.reports._style.
+~1 min read (~400 tokens display). 16:00 IST = 09:00 ET, 30 min before US open.
+Semantic shift from prior "mid-session wrap" to "pre-open outlook" per
+operator ask. Uses the shared visual language from src.reports._style.
 """
 from __future__ import annotations
 
@@ -35,11 +36,11 @@ _SCHEMA: dict[str, Any] = {
     "required": ["one_line_summary", "notable_items"],
 }
 
-_SYSTEM = """You are producing a 1-minute mid-session wrap for a Wall Street FA at 19:00 IST (12:00 ET).
+_SYSTEM = """You are producing a 1-minute pre-open outlook for a Wall Street FA at 16:00 IST (09:00 ET, 30 min before US open).
 
 Rules:
-- one_line_summary: a single sentence characterizing today's tape so far. Concrete, no jokes. Plain English (a client could hear it).
-- notable_items: 0-5 short bullet strings — anomalies, unusual moves, index-vs-sector divergences, notable single-stock action. Each ≤15 words. Precise, no filler. If nothing notable, return [].
+- one_line_summary: a single sentence characterizing the setup going into the US open — overnight/Asia/Europe session behavior, futures direction, dominant macro theme. Concrete, no jokes. Plain English (a client could hear it).
+- notable_items: 0-5 short bullet strings — overnight gaps, pre-market single-stock moves, EU-session tape, futures anomalies, index-vs-sector divergences visible pre-open. Each ≤15 words. Precise, no filler. If nothing notable, return [].
 
 Style: Bloomberg terminal note. No hype. No exclamation points."""
 
@@ -86,7 +87,7 @@ def generate(now: Optional[datetime] = None) -> tuple[str, dict]:
     headlines = news.fetch_headlines(max_per_feed=3)
     headline_block = "\n".join(f"- [{h.source}] {h.title}" for h in headlines[:12])
 
-    user_prompt = f"""DATE: {date_ist} IST (19:00 IST = 12:00 ET, mid-US session)
+    user_prompt = f"""DATE: {date_ist} IST (16:00 IST = 09:00 ET, 30 min before US open)
 
 INDEX / MACRO SNAPSHOT:
 {market_snap}

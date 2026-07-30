@@ -1,10 +1,11 @@
 name: daily_wrap
 
-# ~19:00 IST Mon-Fri (16:07 UTC). Off-peak minute per §B.4: top-of-hour crons
-# on GitHub Actions get silently deferred/dropped under load. Friend sees 19:07-19:22 IST.
+# ~16:00 IST Mon-Fri (13:07 UTC). Operator shifted 3h earlier 2026-07-30 —
+# arrives before US open (09:07 ET) as a "pre-open outlook" rather than the
+# old "mid-session tape read". Off-peak minute per prior tuning.
 on:
   schedule:
-    - cron: '7 16 * * 1-5'
+    - cron: '7 13 * * 1-5'
   workflow_dispatch:
 
 permissions:

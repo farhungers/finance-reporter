@@ -107,7 +107,7 @@ Structure (fixed order — do not permute):
 Personal research — not investment advice. Verify before acting.
 ```
 
-**D.1.b — Daily Wrap (16:00 UTC Mon-Fri = 19:00 IST)**
+**D.1.b — Daily Wrap (13:07 UTC Mon-Fri = 16:00 IST — shifted 2026-07-30)**
 
 Length budget: ~400 tokens (~1 min read).
 
@@ -123,7 +123,7 @@ Tomorrow's key events (IST): [1-2 lines]
 Personal research — not investment advice.
 ```
 
-Note: 19:00 IST is mid-US-session (12:00 ET). Treat as "morning-session wrap + afternoon setup."
+Note: 16:00 IST is 30 min before US open (09:00 ET). Post-shift semantic is "pre-open outlook" — overnight/Asia/Europe tape + futures direction + macro theme going into open. (Prior 19:00 IST version was "mid-US-session wrap"; shifted 2026-07-30 for earlier delivery.)
 
 **D.1.c — Weekly Look-Back (Saturday 13:00 UTC = 16:00 IST)**
 
