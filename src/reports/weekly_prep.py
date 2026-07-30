@@ -63,7 +63,28 @@ def generate(now: Optional[datetime] = None) -> tuple[str, dict]:
     week_end = week_end_dt.strftime("%Y-%m-%d")
 
     events = calendar_source.fetch_week()
-    kb = knowledge.load_for_report("weekly_prep", tickers=list(BLUE_CHIP_UNIVERSE))
+    # Sample populated tickers only — full universe load exceeds Groq's 12K TPM
+    # cap. Seed by week_start so the same week always sees the same set.
+    from src.pitches import _rotating_ticker_sample
+    ticker_sample = _rotating_ticker_sample(week_start, size=5)
+    kb_full = knowledge.load_for_report("weekly_prep", tickers=ticker_sample)
+    # LLM output is just ~10 short bullets — heavy methodology files aren't needed
+    # as context for that. Filter to essentials: ticker facts (for earnings context),
+    # house_view (voice + weekly themes), regime_reads (the highest-signal macro
+    # file per the Marks-fix tuning). Drops sectors/valuation/technicals/correlations
+    # + long macro methodology to stay under Groq's 12K TPM. Full context returns
+    # once operator sets GEMINI_API_KEY and weekly_prep can switch to Gemini's 1M TPM.
+    _ESSENTIAL_KEYS = {
+        "knowledge/house_view/philosophy.md",
+        "knowledge/house_view/active_themes.md",
+        "knowledge/house_view/client_language.md",
+        "knowledge/macro/regime_reads.md",
+        "knowledge/macro/fed_speak_taxonomy.md",
+    }
+    kb = {
+        sid: body for sid, body in kb_full.items()
+        if sid in _ESSENTIAL_KEYS or sid.startswith("knowledge/blue_chip/")
+    }
     kb_ctx = knowledge.build_context_block(kb)
 
     by_day: dict[str, list[calendar_source.CalendarEvent]] = defaultdict(list)
