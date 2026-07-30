@@ -1,12 +1,16 @@
 name: heartbeat_daily_morning
 
-# 04:53 UTC Mon-Fri — 46 min after daily_morning's 04:07 target (clear of the
-# documented 5-15 min GH Actions drift window). Checks report_sends in the DB;
-# if no successful daily_morning row for today, fires the report as fallback.
-# Note: if a primary succeeded but its DB commit step failed, this can duplicate.
+# Polling fallback: 04:13/04:43/05:13/05:43/06:13/06:43/07:13/07:43 UTC Mon-Fri
+# = 8 attempts spanning 07:13-10:43 IST (friend's realistic morning window).
+# Each fire is idempotent — checks report_sends for today's send and skips if
+# already delivered. Multi-attempt design is defense against the documented
+# GH Actions cron-drop pattern (2026-07-28 → 2026-07-30 incident: daily_morning
+# primary at 04:07 UTC and the prior single-shot heartbeat at 04:53 UTC both
+# NEVER fired on schedule; stats_poller which uses the same 13,43 poll pattern
+# fires reliably because at least one of many attempts survives GH's dropouts).
 on:
   schedule:
-    - cron: '53 4 * * 1-5'
+    - cron: '13,43 4-7 * * 1-5'
   workflow_dispatch:
 
 permissions:
