@@ -131,12 +131,13 @@ The Python layer will:
 """
 
 
-def _rotating_ticker_sample(date_ist: str, size: int = 5) -> list[str]:
+def _rotating_ticker_sample(date_ist: str, size: int = 3) -> list[str]:
     """Deterministic day-seeded rotating slice — sampled from *populated* ticker
     fact files only, so the LLM always gets real context (not stubs). Same date
     → same sample, but different days rotate through the populated set. Keeps
-    per-report token load bounded (~15KB max at size=5) so we stay comfortably
-    under Groq's 12K TPM cap."""
+    per-report token load bounded (~9KB at size=3) so we stay comfortably under
+    Groq's 12K TPM cap. Size was 5 initially but hit the limit; 3 gives headroom
+    while still rotating full 25-ticker set every ~8-9 days."""
     populated = _populated_tickers()
     n = len(populated)
     if n == 0 or size >= n:
@@ -217,7 +218,7 @@ def generate(
     # (12K/min) forces this trim; without it, 25+ populated ticker files blow the
     # budget. LLM still receives the full universe list in the system prompt and
     # can pitch any ticker — sampled ones just get the extra facts as context.
-    ticker_sample = _rotating_ticker_sample(date_ist, size=5)
+    ticker_sample = _rotating_ticker_sample(date_ist, size=3)
     kb = knowledge.load_for_report(report_type, tickers=ticker_sample)
     kb_ctx = knowledge.build_context_block(kb)
 
