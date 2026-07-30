@@ -28,7 +28,7 @@ TZ_ET = ZoneInfo("America/New_York")   # market reference ONLY — never in repo
 # Minute shifted off :00/:30 per §B.4: GitHub Actions defers/drops top-of-hour
 # crons under load. GH Actions is now the live scheduler; these constants mirror
 # the workflow YAML for the (currently unused) APScheduler path in main.py.
-CRON_DAILY_MORNING = "7 4 * * 1-5"     # ~07:07 IST weekdays
+CRON_DAILY_MORNING = "7 3 * * 1-5"     # ~06:07 IST weekdays (shifted 1h earlier 2026-07-30 for drift headroom)
 CRON_DAILY_WRAP = "7 16 * * 1-5"       # ~19:07 IST weekdays
 CRON_WEEKLY_LOOKBACK = "7 13 * * 6"    # ~16:07 IST Sat
 CRON_WEEKLY_PREP = "7 13 * * 0"        # ~16:07 IST Sun
