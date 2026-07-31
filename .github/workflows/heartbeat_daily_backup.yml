@@ -1,41 +1,81 @@
 name: heartbeat_daily_backup
 
-# 05:53 UTC daily — post-morning mirror. Fires after daily_morning's realistic
-# delivery window (primary 00:07 UTC + heartbeats to 02:43 UTC + observed 1-2h
-# drift = latest realistic ~04:43 UTC), so this captures the day's pitch/trade
-# writes into the mirror repo. Schedule kept at 05:53 UTC on 2026-07-31 shift;
-# comfortable buffer against a late-delivered morning report.
-# Unconditional re-run: force-pushes latest DB snapshot to the mirror repo.
-# Cheap on free tier, idempotent, robust against scheduled-cron drops
-# (documented 2026-07-29 incident: primary daily_backup cron did not fire
-# despite the workflow being registered and healthy on manual dispatch).
+# Polling fallback for the daily_backup workflow.
+# Every 30 min from 00:00 to 02:30 UTC = 6 attempts across a 2.5h window
+# after the daily_morning primary + heartbeat window closes. Combined with
+# daily_backup primary at 23:37 UTC (previous day) and the previously-existing
+# 05:53 UTC single-shot, gives multiple bites at ensuring at least one backup
+# snapshot per 24h under the observed ~90% GH cron drop rate.
+#
+# Also kept a 05:53 UTC late-morning fire for safety symmetry (was the sole
+# heartbeat before 2026-07-31; captures post-morning DB writes).
+#
+# Idempotency: fast-exit if the backups repo (farhungers/finance-reporter-backups)
+# has a commit on main within the last 22 hours. Prevents 7x/day redundant
+# backup snapshots while still guaranteeing daily coverage under drop conditions.
+#
+# Rewritten 2026-07-31: was a single 05:53 UTC unconditional fire (single-shot
+# heartbeat = same drop-rate exposure as an unhardened primary).
 on:
   schedule:
-    - cron: '53 5 * * *'
+    - cron: '*/30 0-2,5 * * *'
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  run:
+  check_and_maybe_run:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
+      - name: Check if backup ran within last 22h
+        id: check
+        env:
+          BACKUP_REPO_PAT: ${{ secrets.BACKUP_REPO_PAT }}
+        run: |
+          if [ -z "$BACKUP_REPO_PAT" ]; then
+            echo "no PAT — treating as MISSED (will attempt run)"
+            echo "missed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          LATEST_ISO=$(curl -s -H "Authorization: token $BACKUP_REPO_PAT" \
+            "https://api.github.com/repos/farhungers/finance-reporter-backups/commits/main" \
+            | grep -m1 '"date"' | sed 's/.*"date": *"\([^"]*\)".*/\1/')
+          if [ -z "$LATEST_ISO" ]; then
+            echo "couldn't parse latest commit date — treating as MISSED"
+            echo "missed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          LATEST_TS=$(date -u -d "$LATEST_ISO" +%s 2>/dev/null || echo 0)
+          NOW_TS=$(date -u +%s)
+          AGE_HRS=$(( (NOW_TS - LATEST_TS) / 3600 ))
+          if [ "$AGE_HRS" -ge 22 ]; then
+            echo "latest backup is ${AGE_HRS}h old (≥22h) — firing fallback"
+            echo "missed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "latest backup is ${AGE_HRS}h old (<22h) — skipping"
+            echo "missed=false" >> "$GITHUB_OUTPUT"
+          fi
+      # Expensive steps ONLY when a backup actually needs firing.
       - uses: actions/setup-python@v7
+        if: steps.check.outputs.missed == 'true'
         with:
           python-version: '3.11'
           cache: 'pip'
       - name: Install deps
+        if: steps.check.outputs.missed == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       - name: Prepare data dirs
+        if: steps.check.outputs.missed == 'true'
         run: mkdir -p data data/backups data/cache
       - name: Restore DB from data-store branch
+        if: steps.check.outputs.missed == 'true'
         continue-on-error: true
         run: |
           if git ls-remote --exit-code --heads origin data-store >/dev/null 2>&1; then
@@ -45,11 +85,13 @@ jobs:
             echo "data-store branch not yet created — bootstrap run"
           fi
       - name: Run backup (SQLite .backup + prune old)
+        if: steps.check.outputs.missed == 'true'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           PYTHONUNBUFFERED: '1'
         run: python -m src.run_report backup
       - name: Mirror to backups repo
+        if: steps.check.outputs.missed == 'true'
         env:
           BACKUP_REPO_PAT: ${{ secrets.BACKUP_REPO_PAT }}
         run: |
