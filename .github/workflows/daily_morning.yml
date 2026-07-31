@@ -1,12 +1,13 @@
 name: daily_morning
 
 # Target: land by 06:00 IST Mon-Fri. Primary cron 00:07 UTC = 03:07 IST target.
-# Operator-requested shift (2026-07-31) from 03:07 UTC target: previous 2h
-# headroom still lost to GH Actions drift (observed 2026-07-29/30/31: even the
-# first heartbeat at 03:13 UTC dropped; actual delivery landed 05:11-08:20 UTC
-# = 08:11-11:20 IST). New 3h headroom: primary + heartbeats span 00:07-02:43
-# UTC (03:07-05:43 IST); worst-case landing ≤ 06:00 IST if any of 7 attempts
-# fires within its typical 20-60min drift band.
+# Combined with heartbeat_daily_morning (every 10 min, 00:00-02:50 UTC) gives
+# 19 total attempts across a 3h window. Even under the observed ~90% GH cron
+# drop rate, 0.9^19 = 13% chance all miss — well inside a "won't miss more
+# than once a month" tolerance.
+# Shifted 3h earlier 2026-07-31 (was 03:07 UTC target). Prior 2h headroom
+# still missed target — see memory project_gh_actions_cron_offpeak.md for
+# the full three-layer defense evolution and incident history.
 on:
   schedule:
     - cron: '7 0 * * 1-5'
@@ -42,25 +43,6 @@ jobs:
           else
             echo "data-store branch not yet created — bootstrap run"
           fi
-      - name: Diagnose DB state BEFORE run
-        run: |
-          echo "--- pwd ---"; pwd
-          echo "--- ls data/ ---"; ls -la data/
-          echo "--- DB state before run ---"
-          if [ -f data/finance_reporter.db ]; then
-            python -c "
-          import sqlite3
-          c = sqlite3.connect('data/finance_reporter.db')
-          print('page_count:', list(c.execute('PRAGMA page_count'))[0])
-          tables = [r[0] for r in c.execute(\"SELECT name FROM sqlite_master WHERE type='table' ORDER BY name\")]
-          print('tables:', tables)
-          if 'report_sends' in tables:
-              for r in c.execute('SELECT COUNT(*) FROM report_sends'):
-                  print('report_sends count:', r[0])
-          "
-          else
-            echo "no DB file yet"
-          fi
       - name: Run daily_morning
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -71,30 +53,6 @@ jobs:
           KILL_SWITCH_DAILY_MORNING: 'false'
           PYTHONUNBUFFERED: '1'
         run: python -m src.run_report daily_morning
-      - name: Diagnose DB state AFTER run
-        if: always()
-        run: |
-          echo "--- ls data/ ---"; ls -la data/
-          echo "--- DB state after run ---"
-          if [ -f data/finance_reporter.db ]; then
-            python -c "
-          import sqlite3
-          c = sqlite3.connect('data/finance_reporter.db')
-          print('page_count:', list(c.execute('PRAGMA page_count'))[0])
-          tables = [r[0] for r in c.execute(\"SELECT name FROM sqlite_master WHERE type='table' ORDER BY name\")]
-          print('tables:', tables)
-          if 'report_sends' in tables:
-              for r in c.execute('SELECT COUNT(*) FROM report_sends'):
-                  print('report_sends count:', r[0])
-              for r in c.execute(\"SELECT report_type, sent_at, telegram_message_id FROM report_sends ORDER BY sent_at DESC LIMIT 3\"):
-                  print('recent:', tuple(r))
-          if 'pitches' in tables:
-              for r in c.execute('SELECT COUNT(*) FROM pitches'):
-                  print('pitches count:', r[0])
-          "
-          else
-            echo "no DB file"
-          fi
       - name: Commit DB to data-store branch
         if: always()
         run: |
