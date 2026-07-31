@@ -1,13 +1,15 @@
 name: daily_morning
 
-# ~06:00 IST Mon-Fri (03:07 UTC). Operator-requested shift (2026-07-30) from
-# 07:00 IST target: bake in headroom for the 1-2h GH Actions cron drift we've
-# been seeing so friend still gets the briefing at his old target time even on
-# bad-drift days. Off-peak minute per prior tuning. Polling heartbeat covers
-# 03:13-06:43 UTC as fallback.
+# Target: land by 06:00 IST Mon-Fri. Primary cron 00:07 UTC = 03:07 IST target.
+# Operator-requested shift (2026-07-31) from 03:07 UTC target: previous 2h
+# headroom still lost to GH Actions drift (observed 2026-07-29/30/31: even the
+# first heartbeat at 03:13 UTC dropped; actual delivery landed 05:11-08:20 UTC
+# = 08:11-11:20 IST). New 3h headroom: primary + heartbeats span 00:07-02:43
+# UTC (03:07-05:43 IST); worst-case landing ≤ 06:00 IST if any of 7 attempts
+# fires within its typical 20-60min drift band.
 on:
   schedule:
-    - cron: '7 3 * * 1-5'
+    - cron: '7 0 * * 1-5'
   workflow_dispatch:
 
 permissions:

@@ -1,8 +1,10 @@
 name: heartbeat_daily_backup
 
-# 05:53 UTC daily — 2h 16min after daily_backup's 03:37 target (clear of the
-# documented 5-15 min GH Actions drift window AND after daily_morning at 04:07
-# has written its updates to the DB).
+# 05:53 UTC daily — post-morning mirror. Fires after daily_morning's realistic
+# delivery window (primary 00:07 UTC + heartbeats to 02:43 UTC + observed 1-2h
+# drift = latest realistic ~04:43 UTC), so this captures the day's pitch/trade
+# writes into the mirror repo. Schedule kept at 05:53 UTC on 2026-07-31 shift;
+# comfortable buffer against a late-delivered morning report.
 # Unconditional re-run: force-pushes latest DB snapshot to the mirror repo.
 # Cheap on free tier, idempotent, robust against scheduled-cron drops
 # (documented 2026-07-29 incident: primary daily_backup cron did not fire
