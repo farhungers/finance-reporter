@@ -21,6 +21,14 @@ set -euo pipefail
 
 LOCAL_DB="data/finance_reporter.db"
 
+# Fail loud if sqlite3 is missing — otherwise `|| echo 0` in count_db swallows
+# every query error and the guard silently passes empty pushes. That is exactly
+# the failure mode this script exists to prevent.
+if ! command -v sqlite3 >/dev/null 2>&1; then
+  echo "guard: FATAL — sqlite3 CLI not available; cannot verify row counts. Aborting push."
+  exit 2
+fi
+
 if [ ! -f "$LOCAL_DB" ]; then
   echo "guard: no local DB file — nothing to push"
   exit 0
