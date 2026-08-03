@@ -1,24 +1,26 @@
 name: heartbeat_daily_morning
 
-# Polling fallback: every 10 min from 00:00 to 02:50 UTC Mon-Fri
-# = 18 attempts spanning 03:00-05:50 IST. Combined with 00:07 UTC primary
-# gives 19 attempts across a 3h window. Goal: at-least-one lands ≤ 06:00
-# IST even under the observed GH Actions cron drop rate (~90% of scheduled
-# fires silently dropped for this repo, so more attempts = better survival).
+# Polling fallback: every 10 min from 00:00 to 08:50 UTC Mon-Fri
+# = 54 attempts spanning 03:00-11:50 IST. Combined with 00:07 UTC primary
+# gives 55 attempts across a 9h window. Goal: at-least-one lands ≤ 12:00
+# IST even when GH backlogs an entire wave (~90% cron drop AND multi-hour
+# queue holds — see 2026-08-03 incident where all 19 attempts of the prior
+# 3h window fired together at 12:41 UTC).
 #
 # Cost discipline: idle attempts fast-exit via a system-sqlite3 check BEFORE
 # the expensive setup-python + pip install steps. Idle run ~5-10s, real run
-# ~90s. Budget: 18 attempts × 5 days × ~10s = ~15 min/week idle + ~2 min/week
-# real = ~70 min/month. Fits in the ~2000 min/month free tier alongside other
-# workflows.
+# ~90s. Budget: 54 attempts × 5 days × ~10s = ~45 min/week idle + ~2 min/week
+# real = ~190 min/month. Fits in the ~2000 min/month free tier alongside
+# other workflows.
 #
-# Shifted 3h earlier + cadence doubled 2026-07-31 (was 13,43 0-2, 6 attempts)
-# after even the 3h-headroom + polling still missed target on drop-heavy days.
+# Widened 2026-08-03 from 0-2 UTC to 0-8 UTC after a full-day GH backlog
+# delayed the entire 3h-window wave to 12:41 UTC (15:41 IST). Wider window
+# gives more independent schedule slots to survive multi-hour backlogs.
 # See daily_morning.yml + memory project_gh_actions_cron_offpeak.md for full
 # incident history.
 on:
   schedule:
-    - cron: '*/10 0-2 * * 1-5'
+    - cron: '*/10 0-8 * * 1-5'
   workflow_dispatch:
 
 permissions:

@@ -1,13 +1,18 @@
 name: daily_morning
 
 # Target: land by 06:00 IST Mon-Fri. Primary cron 00:07 UTC = 03:07 IST target.
-# Combined with heartbeat_daily_morning (every 10 min, 00:00-02:50 UTC) gives
-# 19 total attempts across a 3h window. Even under the observed ~90% GH cron
-# drop rate, 0.9^19 = 13% chance all miss — well inside a "won't miss more
-# than once a month" tolerance.
-# Shifted 3h earlier 2026-07-31 (was 03:07 UTC target). Prior 2h headroom
-# still missed target — see memory project_gh_actions_cron_offpeak.md for
-# the full three-layer defense evolution and incident history.
+# Combined with heartbeat_daily_morning (every 10 min, 00:00-08:50 UTC) gives
+# 55 total attempts across a 9h window. Even under the observed ~90% GH cron
+# drop rate, 0.9^55 ≈ 0.3% chance all miss.
+#
+# Idempotency: same "already sent today" DB guard as the heartbeat. Safe to
+# be triggered by (a) primary cron, (b) heartbeat, (c) workflow_dispatch, and
+# (d) external cron-job.org POST — the first successful send wins; subsequent
+# triggers exit before the expensive Python setup.
+#
+# Shifted 3h earlier 2026-07-31 (was 03:07 UTC target). Widened + guarded
+# 2026-08-03 after a full-day GH backlog delayed all 19 attempts to 12:41 UTC.
+# See memory project_gh_actions_cron_offpeak.md for full incident history.
 on:
   schedule:
     - cron: '7 0 * * 1-5'
@@ -21,17 +26,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # Cheap steps FIRST so late/duplicate fires exit before Python setup.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-      - name: Install deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
       - name: Prepare data dirs
         run: mkdir -p data data/backups data/cache
       - name: Restore DB from data-store branch
@@ -43,7 +41,39 @@ jobs:
           else
             echo "data-store branch not yet created — bootstrap run"
           fi
+      - name: Check if daily_morning already sent today
+        id: check
+        run: |
+          if [ ! -f data/finance_reporter.db ]; then
+            echo "no DB — treating as MISSED"
+            echo "missed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          TODAY=$(date -u +%Y-%m-%d)
+          COUNT=$(sqlite3 data/finance_reporter.db \
+            "SELECT COUNT(*) FROM report_sends
+             WHERE report_type='daily_morning'
+             AND sent_at LIKE '${TODAY}%'
+             AND telegram_message_id IS NOT NULL;")
+          if [ "$COUNT" -eq 0 ]; then
+            echo "daily_morning MISSED today (${TODAY}) — firing"
+            echo "missed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "daily_morning already sent today (${TODAY}), count=${COUNT} — skipping"
+            echo "missed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-python@v7
+        if: steps.check.outputs.missed == 'true'
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install deps
+        if: steps.check.outputs.missed == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
       - name: Run daily_morning
+        if: steps.check.outputs.missed == 'true'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -54,7 +84,7 @@ jobs:
           PYTHONUNBUFFERED: '1'
         run: python -m src.run_report daily_morning
       - name: Commit DB to data-store branch
-        if: always()
+        if: steps.check.outputs.missed == 'true'
         run: |
           set -e
           if [ ! -f data/finance_reporter.db ]; then
