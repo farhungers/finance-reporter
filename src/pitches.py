@@ -283,12 +283,23 @@ def generate(
     kb = knowledge.load_for_report(report_type, tickers=ticker_sample)
     kb_ctx = knowledge.build_context_block(kb)
 
-    # Compute earnings flags for the full universe (or a targeted subset — for now, full).
-    # yfinance calls can be slow; skip if quota-worried. We check a small set for the pilot.
-    # In production, cache these daily.
+    # Pre-compute EARNINGS_WITHIN_3D flags for the ticker sample so the LLM sees
+    # them BEFORE selection and can prefer earnings-week candidates. Post-hoc
+    # rubric enforcement still runs on whatever ticker the LLM picks (even
+    # outside the sample), but sample coverage is where the extra signal is
+    # most valuable. yfinance calls ~1s per ticker × 3 = ~3s added latency.
     earnings_flags: dict[str, dict[str, Any]] = {}
-    # For pilot speed, only check a rotating subset. LLM will still be told about the universe.
-    # Skip in dry-run pilot unless explicitly requested — see pipeline caller.
+    for t in ticker_sample:
+        try:
+            ei = check_earnings(t)
+        except Exception as e:
+            log.warning("earnings check failed for %s: %s", t, e)
+            continue
+        if ei and ei.within_3_trading_days:
+            earnings_flags[t] = {
+                "date": ei.next_earnings_date.isoformat(),
+                "td": ei.trading_days_until,
+            }
 
     user_prompt = _build_user_prompt(
         date_ist, calendar_summary, market_snapshot, news_summary, kb_ctx, earnings_flags,
