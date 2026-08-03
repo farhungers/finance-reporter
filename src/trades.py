@@ -170,6 +170,15 @@ def generate(
         t = raw[klass]
         rs = rubric.score(t["rubric"], earnings_within_3d=False)
         low_warn = t.get("low_star_warning") if rs.stars <= 1 else None
+        reasoning = t["one_line_reasoning"].strip()
+        # §D.7: verbatim-paste detection also applies to trade reasoning.
+        vh = knowledge.verbatim_hits(reasoning, kb)
+        if vh:
+            for sid, phrase in vh[:2]:
+                log.warning(
+                    "trade %s reasoning contains verbatim chunk from %s: %r",
+                    t["asset_symbol"], sid, phrase,
+                )
         trades.append(
             Trade(
                 asset_symbol=t["asset_symbol"].upper(),
@@ -178,7 +187,7 @@ def generate(
                 entry=float(t["entry"]),
                 tp=float(t["tp"]),
                 sl=float(t["sl"]),
-                one_line_reasoning=t["one_line_reasoning"].strip(),
+                one_line_reasoning=reasoning,
                 star_rating=rs.stars,
                 rubric_breakdown=rs.breakdown,
                 low_star_warning=low_warn,
