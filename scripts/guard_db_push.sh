@@ -1,23 +1,28 @@
 #!/usr/bin/env bash
-# Guard: refuse to push data/finance_reporter.db to origin/data-store when the
-# push would empty or regress the remote. Exits 1 (blocking) on regression,
-# 0 (proceed) on healthy state or legitimate bootstrap.
+# Guard: refuse to push data/finance_reporter.db when the push would empty or
+# regress the destination. Exits 1 (blocking) on regression, 0 (proceed) on
+# healthy state or legitimate bootstrap.
 #
-# Design context (2026-08-03): the original workflows used `git init -q -b
-# data-store` + `git push -f origin data-store`, which force-rewrites the
-# branch to a single-commit history every run. When any run started with an
-# empty DB (restore fail, first-time bootstrap misdetection, etc.), the push
-# permanently destroyed all prior state. This guard closes that hole.
+# Two modes:
+#   default: compares local against origin/data-store (the primary state store)
+#   --local-only: only requires local count > 0 (used for the daily_backup
+#     mirror to farhungers/finance-reporter-backups — that repo is a snapshot
+#     mirror, not a growth store, and we don't have its ref locally)
 #
-# Contract:
-#   - If no local DB file exists: exit 0 (nothing to push, upstream should skip).
-#   - If local count >= remote count: exit 0 (proceed).
-#   - If remote branch does not exist yet: exit 0 (bootstrap).
-#   - If local count < remote count: exit 1 (refuse; preserve remote history).
+# Design context (2026-08-03): workflows used `git init -q -b <branch>` + force-
+# push, which rewrites the destination to a single-commit history every run.
+# When any run started with an empty DB (restore fail, misdetection, etc.), the
+# push permanently destroyed prior state. This guard closes the hole for both
+# data-store (default mode) and the backup mirror (--local-only mode).
 #
-# "Count" here means pitches + trades + report_sends. These are the tables
-# whose loss breaks the accuracy loop (§E.24, §C5).
+# "Count" means pitches + trades + report_sends — the tables whose loss breaks
+# the accuracy loop (§E.24, §C5).
 set -euo pipefail
+
+MODE="remote"
+if [ "${1:-}" = "--local-only" ]; then
+  MODE="local"
+fi
 
 LOCAL_DB="data/finance_reporter.db"
 
@@ -47,6 +52,17 @@ count_db() {
 }
 
 LOCAL_COUNT=$(count_db "$LOCAL_DB")
+
+if [ "$MODE" = "local" ]; then
+  echo "guard(--local-only): local_count=$LOCAL_COUNT"
+  if [ "$LOCAL_COUNT" -eq 0 ]; then
+    echo "guard: REFUSING PUSH — local DB has 0 rows across pitches+trades+report_sends."
+    echo "guard: This would overwrite the backup mirror with an empty snapshot. Aborting."
+    exit 1
+  fi
+  echo "guard: OK — proceeding with push"
+  exit 0
+fi
 
 REMOTE_COUNT=0
 if git ls-remote --exit-code --heads origin data-store >/dev/null 2>&1; then

@@ -45,6 +45,8 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           PYTHONUNBUFFERED: '1'
         run: python -m src.run_report backup
+      - name: Guard DB before mirror push (refuse empty state)
+        run: bash scripts/guard_db_push.sh --local-only
       - name: Mirror to backups repo
         env:
           BACKUP_REPO_PAT: ${{ secrets.BACKUP_REPO_PAT }}
