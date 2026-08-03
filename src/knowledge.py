@@ -167,3 +167,42 @@ def build_context_block(chunks: dict[str, str]) -> str:
         parts.append(f"\n--- {sid} ---\n{body}")
     parts.append("\n=== END KNOWLEDGE LIBRARY ===")
     return "\n".join(parts)
+
+
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+# 8-token contiguous windows below this length are common English phrases that
+# will collide by chance ("the primary risk is a" etc). Below 6 is too noisy;
+# above 10 misses real short verbatim copies. 8 is the calibrated middle.
+_VERBATIM_WINDOW = 8
+
+
+def _tokenize(text: str) -> list[str]:
+    return _TOKEN_RE.findall(text.lower())
+
+
+def _windows(tokens: list[str], size: int) -> list[str]:
+    if len(tokens) < size:
+        return []
+    return [" ".join(tokens[i : i + size]) for i in range(len(tokens) - size + 1)]
+
+
+def verbatim_hits(text: str, chunks: dict[str, str]) -> list[tuple[str, str]]:
+    """Detect when `text` (thesis, one_line_reasoning, etc.) contains contiguous
+    8-token windows lifted verbatim from any knowledge chunk. §D.7: LLM must
+    transform and apply, never paste verbatim. Case- and punctuation-insensitive.
+
+    Returns list of (source_id, offending_phrase). Empty list = clean.
+
+    Not a hard fail — the caller decides whether to warn or block (§C11 says
+    never omit; we prefer warning + log over blocking a shipped report)."""
+    text_windows = set(_windows(_tokenize(text), _VERBATIM_WINDOW))
+    if not text_windows:
+        return []
+    hits: list[tuple[str, str]] = []
+    for sid, body in chunks.items():
+        chunk_windows = set(_windows(_tokenize(body), _VERBATIM_WINDOW))
+        overlap = text_windows & chunk_windows
+        for phrase in overlap:
+            hits.append((sid, phrase))
+    return hits

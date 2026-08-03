@@ -321,6 +321,17 @@ def generate(
                 "pitch %s flagged EARNINGS_WITHIN_3D but thesis has no date token — spec drift",
                 sym,
             )
+        # §D.7: LLM MUST NOT paste knowledge text verbatim — transform and apply.
+        # Detect 8-token contiguous copies from any loaded chunk. Warn only per
+        # §C11 (never omit); operator sees the drift in logs and can prune the
+        # offending chunk over time.
+        vh = knowledge.verbatim_hits(thesis_text, kb)
+        if vh:
+            for sid, phrase in vh[:3]:
+                log.warning(
+                    "pitch %s thesis contains verbatim chunk from %s: %r",
+                    sym, sid, phrase,
+                )
         pitches.append(
             Pitch(
                 asset_symbol=sym,
