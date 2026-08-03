@@ -81,14 +81,52 @@ MANDATORY: exactly 3 trades — 1 commodity, 1 US-listed equity (NOT restricted 
 
 STRICT RULES:
 - Provide precise numeric entry, TP, SL for each trade.
-- TP/SL ratio ≥ 2:1 → rubric.risk_reward=true, else false.
 - SL must sit at a real technical level (prior swing, ATR band, structural break), not arbitrary.
 - one_line_reasoning: single line, precise, non-joking. Cite the mechanism (breakout retest, mean reversion at level, macro-catalyst positioning).
-- Rubric: return 5 booleans exactly. Do NOT sum — Python does.
 - knowledge_sources_used: cite source_ids that shaped the trade.
 - low_star_warning (only when rubric sums to 0 or 1): 1 line, precise, explain why shipping despite low conviction. Never omit a class slot — always ship 3.
 
-Class integrity: even if a class has no A-grade setup today, produce the best available with honest low stars and a low_star_warning. Do NOT substitute across classes."""
+Class integrity: even if a class has no A-grade setup today, produce the best available with honest low stars and a low_star_warning. Do NOT substitute across classes.
+
+RUBRIC — you output 5 booleans; Python sums them. Be STRICT. Default to FALSE when the criterion is not clearly met. A 5/5 should be rare (~10% of days). Star inflation destroys the calibration loop.
+
+  macro_alignment: TRUE only if today's direction rides the DOMINANT macro
+    theme (rates direction, DXY move, VIX regime, active sector rotation).
+    Name the read in one_line_reasoning.
+    FALSE if fighting the tape or ignoring the day's driver. Default FALSE.
+
+  technical_setup: TRUE only if entry sits at a CLEAN, nameable structural
+    level (prior swing, breakout retest, trendline, moving-average band).
+    FALSE if the entry floats mid-range or the level is invented. Default FALSE.
+
+  catalyst_proximity: TRUE only if a NAMED, DATED catalyst hits within the
+    trade's horizon (macro release today/tomorrow, earnings this week for
+    equity, scheduled sector event, funding-rate flip for crypto).
+    FALSE for "eventually" or "in coming weeks". No date = FALSE.
+
+  base_rate_support: TRUE only if this SETUP TYPE has been historically
+    playable — name the analog class in one_line_reasoning (post-CPI drift,
+    post-FOMC vol, breakout-retest after tight consolidation, gold bid on
+    real-yield fall, etc.).
+    FALSE if novel or you cannot name the historical analog. Default FALSE.
+
+  risk_reward: TRUE only if TP/SL distance ratio is ≥ 2:1 AND SL sits at a
+    real technical level (not a round number). Both conditions required.
+    FALSE if the ratio is below 2:1 OR the SL is arbitrary. Default FALSE.
+
+STAR CALIBRATION (honest distribution over 30 days):
+  5/5 — ~10%. Every factor individually defensible with cited evidence.
+  4/5 — the solid daily default when the setup is real.
+  3/5 — "playable but not a slam dunk."
+  2/5 — "the best we have in this class today."
+  0-1/5 — ship with low_star_warning; do not omit the class slot.
+
+Examples that are 0 on the named factor:
+  • Trade with no macro read cited → macro_alignment=0.
+  • Entry mid-range with no nameable level → technical_setup=0.
+  • "News soon" without a scheduled date → catalyst_proximity=0.
+  • "It usually works" without an analog class → base_rate_support=0.
+  • TP/SL ratio 1.5:1, or SL at a round number → risk_reward=0."""
 
 
 def _build_user_prompt(

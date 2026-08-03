@@ -25,7 +25,8 @@ try:
 except Exception:
     pass
 
-from src import config, db, scheduler, telegram_send
+from src import config, db, knowledge, scheduler, telegram_send
+from src.market_data import BLUE_CHIP_UNIVERSE
 from src.reports import daily_morning, daily_wrap, weekly_lookback, weekly_prep
 
 log = logging.getLogger(__name__)
@@ -69,6 +70,17 @@ def main() -> int:
         return 2
 
     kind = sys.argv[1].strip().lower()
+
+    # §E.19 fail-fast: every blue-chip ticker must have its facts file.
+    # Skip on backup (no LLM path, no pitches).
+    if kind != "backup":
+        _present, missing = knowledge.verify_blue_chip_coverage(BLUE_CHIP_UNIVERSE)
+        if missing:
+            log.error(
+                "blue-chip coverage FAIL — missing facts files for %d tickers: %s",
+                len(missing), ", ".join(missing),
+            )
+            return 3
 
     db.init_db()
 

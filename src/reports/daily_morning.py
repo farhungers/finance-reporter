@@ -2,7 +2,7 @@
 
 Structure (fixed order):
   1. Today's calendar (IST)
-  2. Today's pitches — 3 blue-chip
+  2. Today's pitches — 2 blue-chip
   3. Today's trades — 1 commodity + 1 stock + 1 crypto
 
 Length budget: ~1500 tokens display.

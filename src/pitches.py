@@ -1,6 +1,6 @@
 """Blue-chip pitch generator (CLAUDE.md §D.1.a Part 2, §C3, §C11).
 
-Always ships 3 pitches. Low-star (0-1) ships with a 1-line low_star_warning.
+Always ships 2 pitches. Low-star (0-1) ships with a 1-line low_star_warning.
 Never gaps. Never substitutes.
 
 Rubric booleans come from the LLM; stars are summed in Python (§E.7).
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Optional
@@ -20,6 +21,21 @@ from src.earnings import check_earnings
 from src.market_data import BLUE_CHIP_UNIVERSE
 
 log = logging.getLogger(__name__)
+
+# §D.8 belt-and-suspenders: when a pitch is flagged EARNINGS_WITHIN_3D, the
+# thesis MUST mention the earnings date. A missing mention is a spec violation
+# — the LLM said "earnings soon" without wiring the actual date, which is the
+# exact hallucination surface §D.8 exists to close.
+_MONTH_TOKEN = re.compile(
+    r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b",
+    re.IGNORECASE,
+)
+_NUMERIC_DATE = re.compile(r"\b\d{1,2}[/-]\d{1,2}\b")
+
+
+def _thesis_mentions_date(thesis: str) -> bool:
+    return bool(_MONTH_TOKEN.search(thesis) or _NUMERIC_DATE.search(thesis))
 
 
 @dataclass
@@ -118,11 +134,56 @@ KEY FACTORS:
 
 OTHER FIELDS:
 - rough_entry_hint: freeform, natural language ("near $185 support", "on pullback to 50-day average"). Not a precise number.
-- Rubric: return 5 booleans exactly. Do NOT compute stars — the Python layer does that.
-- knowledge_sources_used: cite EVERY source_id from the KNOWLEDGE LIBRARY block that shaped this pitch. NEVER paste text verbatim — transform and apply. If a pitch used no knowledge chunks, return [] (allowed but note it costs a rubric factor).
+- knowledge_sources_used: cite EVERY source_id from the KNOWLEDGE LIBRARY block that shaped this pitch. NEVER paste text verbatim — transform and apply. If a pitch used no knowledge chunks, return [].
 - For each pitch with EARNINGS_WITHIN_3D marked, you MUST include earnings_direction_expectation ('bullish' / 'bearish' / 'unknown') AND mention the earnings date + expected impact in the thesis.
 - horizon_days: typical hold window (5-15 for tactical, up to 30 for slower thematic).
 - low_star_warning (only when your rubric booleans sum to 0 or 1): 1 line, plain English, non-joking — explain honestly why shipping despite low conviction. Something the FA can say: "no near-term catalyst; treat as watch-list only". Omit or leave empty when stars≥2.
+
+RUBRIC — you output 5 booleans; Python sums them. Be STRICT. Default to FALSE when the criterion is not clearly met. A 5/5 should be rare (~10% of days). Star inflation destroys the calibration loop.
+
+  macro_alignment: TRUE only if today's setup rides the DOMINANT macro theme
+    (rates direction, DXY move, VIX regime, active sector rotation). You must
+    be able to name that macro read in the thesis in one clause.
+    FALSE if the setup fights the tape or ignores the day's driver.
+    Default FALSE.
+
+  technical_setup: TRUE only if a CLEAN nameable structural level is in play
+    (support, resistance, trendline, prior breakout base, 50/200-DMA).
+    FALSE if the chart is mid-range with no defined level.
+    Default FALSE unless the entry hint sits at a nameable level.
+
+  catalyst_proximity: TRUE only if a NAMED, DATED catalyst hits within the
+    horizon: earnings this week, a scheduled macro release today/tomorrow, a
+    scheduled sector event.
+    FALSE for "eventually", "in coming weeks", or "expected". No date = FALSE.
+    (Python force-sets this TRUE for EARNINGS_WITHIN_3D tickers — you can't
+    override that, but for non-flagged tickers, be strict.)
+
+  base_rate_support: TRUE only if this SETUP TYPE has been historically
+    playable — cite the class of prior instances (post-CPI drift, post-FOMC
+    vol, seasonal Nov-Apr, breakout-retest after tight consolidation, etc.).
+    Reference the pattern in your thesis or key_factors.
+    FALSE if the setup is novel or you can't name the historical analog.
+    Default FALSE.
+
+  risk_reward: TRUE only if the move has ≥2× typical daily ATR of headroom
+    to the thesis target AND a defined invalidation level is nameable.
+    FALSE if the target is close, or if no invalidation is nameable.
+    "Room to run" without an invalidation = FALSE. Default FALSE.
+
+STAR CALIBRATION (honest distribution over 30 days):
+  5/5 — ~10%. Every factor individually defensible with cited evidence.
+  4/5 — the solid daily default when the setup is real.
+  3/5 — "we can talk about this but it's not a slam dunk."
+  2/5 — "here's what we have if you insist on 2 today."
+  0-1/5 — ship with low_star_warning; do not withhold (per §C11).
+
+Examples that are 0 on the named factor:
+  • Pitch that "feels right" but names no macro read → macro_alignment=0.
+  • "Trend is up" with no nameable level → technical_setup=0.
+  • "Earnings soon" with no scheduled date → catalyst_proximity=0.
+  • "Historically it's worked" without citing the analog class → base_rate_support=0.
+  • Target 3% away but no invalidation named → risk_reward=0.
 
 The Python layer will:
 - Sum your rubric booleans to compute the 0-5 star rating
@@ -184,7 +245,7 @@ def _build_user_prompt(
 
     return f"""DATE: {date_ist} IST
 
-BLUE_CHIP_UNIVERSE (choose exactly 3, distinct):
+BLUE_CHIP_UNIVERSE (choose exactly 2, distinct):
 {universe}
 
 TODAY'S CALENDAR (IST):
@@ -201,7 +262,7 @@ EARNINGS-WITHIN-3D FLAGS:
 
 {knowledge_context}
 
-Produce 3 blue-chip pitches per the schema. Cite knowledge sources by source_id.
+Produce 2 blue-chip pitches per the schema. Cite knowledge sources by source_id.
 """
 
 
@@ -251,11 +312,20 @@ def generate(
         within_3d = bool(ei and ei.within_3_trading_days)
         rs = rubric.score(p["rubric"], earnings_within_3d=within_3d)
         low_warn = p.get("low_star_warning") if rs.stars <= 1 else None
+        thesis_text = p["thesis"].strip()
+        if within_3d and not _thesis_mentions_date(thesis_text):
+            # §D.8, §E.21: flagged tickers MUST reference the earnings date.
+            # Downgrade to a warning rather than hard-fail so we still ship
+            # (per §C11 never-omit); operator sees the drift in logs.
+            log.warning(
+                "pitch %s flagged EARNINGS_WITHIN_3D but thesis has no date token — spec drift",
+                sym,
+            )
         pitches.append(
             Pitch(
                 asset_symbol=sym,
                 direction=p["direction"],
-                thesis=p["thesis"].strip(),
+                thesis=thesis_text,
                 key_factors=[k.strip() for k in p["key_factors"]],
                 rough_entry_hint=(p.get("rough_entry_hint") or "").strip() or None,
                 star_rating=rs.stars,
