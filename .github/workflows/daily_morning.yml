@@ -1,18 +1,22 @@
 name: daily_morning
 
-# Target: land by 06:00 IST Mon-Fri. Primary cron 00:07 UTC = 03:07 IST target.
-# Combined with heartbeat_daily_morning (every 10 min, 00:00-08:50 UTC) gives
-# 55 total attempts across a 9h window. Even under the observed ~90% GH cron
-# drop rate, 0.9^55 ≈ 0.3% chance all miss.
+# Two-layer trigger architecture (as of 2026-08-03):
+#   Plan A (primary): external cron-job.org POSTs workflow_dispatch at 00:03
+#     UTC Mon-Fri. ~99.9% reliability. This is what actually lands the report
+#     on time.
+#   Plan B (fallback): the GH-native cron below at 00:07 UTC Mon-Fri. GH cron
+#     has ~90% drop rate + occasional multi-hour backlogs for this repo, so
+#     it's kept only to cover the rare cron-job.org outage day (~1/year).
 #
-# Idempotency: same "already sent today" DB guard as the heartbeat. Safe to
-# be triggered by (a) primary cron, (b) heartbeat, (c) workflow_dispatch, and
-# (d) external cron-job.org POST — the first successful send wins; subsequent
-# triggers exit before the expensive Python setup.
+# Idempotency guard: whichever layer fires first sends the report; subsequent
+# fires check the DB, see "already sent today," and exit before the expensive
+# Python setup. Safe to be triggered by cron + workflow_dispatch + external
+# POST in any order.
 #
-# Shifted 3h earlier 2026-07-31 (was 03:07 UTC target). Widened + guarded
-# 2026-08-03 after a full-day GH backlog delayed all 19 attempts to 12:41 UTC.
-# See memory project_gh_actions_cron_offpeak.md for full incident history.
+# History: shifted 3h earlier 2026-07-31 (was 03:07 UTC target). Redesigned
+# 2026-08-03 after a full-day GH backlog delayed all 19 heartbeat attempts to
+# 12:41 UTC (15:41 IST); heartbeat retired in favor of external primary. See
+# memory project_gh_actions_cron_offpeak.md for full incident history.
 on:
   schedule:
     - cron: '7 0 * * 1-5'
