@@ -46,6 +46,9 @@ jobs:
           KILL_SWITCH_WEEKLY_PREP: 'false'
           PYTHONUNBUFFERED: '1'
         run: python -m src.run_report weekly_prep
+      - name: Guard DB before push (refuse empty/regressing state)
+        if: always()
+        run: bash scripts/guard_db_push.sh
       - name: Commit DB to data-store branch
         if: always()
         run: |

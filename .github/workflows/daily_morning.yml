@@ -87,6 +87,9 @@ jobs:
           KILL_SWITCH_DAILY_MORNING: 'false'
           PYTHONUNBUFFERED: '1'
         run: python -m src.run_report daily_morning
+      - name: Guard DB before push (refuse empty/regressing state)
+        if: steps.check.outputs.missed == 'true'
+        run: bash scripts/guard_db_push.sh
       - name: Commit DB to data-store branch
         if: steps.check.outputs.missed == 'true'
         run: |
