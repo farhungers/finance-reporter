@@ -157,6 +157,14 @@ class GroqProvider(Provider):
                     # Low temperature keeps constrained-decoding stable; some
                     # thesis-prose variety loss is worth the reliability win.
                     temperature=0.15,
+                    # Explicit output budget — SDK default was truncating our
+                    # 2-pitch responses mid-JSON (observed 2026-08-17 22:08Z:
+                    # "max completion tokens reached before generating a valid
+                    # document"). 6000 tokens ≈ ~4500 words = plenty for our
+                    # largest output (2 pitches with prose thesis each, or 3
+                    # trades with reasoning). gpt-oss-20b context is 131k so
+                    # this stays well within limits.
+                    max_completion_tokens=6000,
                 )
                 text = resp.choices[0].message.content or ""
                 parsed = json.loads(text)
