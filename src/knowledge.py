@@ -96,11 +96,20 @@ def _is_stub(chunk: KnowledgeChunk) -> bool:
 def load_for_report(report_type: str, tickers: list[str] | None = None) -> dict[str, str]:
     """Return {source_id: chunk_body_markdown} for the given report + tickers.
 
-    Selection rule:
-      - Any file where frontmatter `applies_to_reports` includes report_type
-      - Plus every knowledge/blue_chip/{TICKER}_facts.md for tickers in `tickers`
-      - Plus knowledge/house_view/active_themes.md (always)
-      - Plus knowledge/house_view/client_language.md (for pitch-generating reports)
+    Groq free-tier org cap is 8K TPM (not per-model — confirmed 2026-08-18 after
+    both gpt-oss-120b and gpt-oss-20b hit 413 at ~10.8K token requests). For
+    daily_morning + daily_wrap we ship a MINIMAL set — ticker facts + house_view
+    essentials only — to keep the single-call prompt under 6.5K tokens with
+    headroom. Full whole-tree scan is preserved for weekly reports where a single
+    slower call is worth the fuller context.
+
+    Selection rules:
+      daily_morning / daily_wrap:
+        - Every knowledge/blue_chip/{TICKER}_facts.md for tickers in `tickers`
+        - Plus knowledge/house_view/active_themes.md (always)
+        - Plus knowledge/house_view/client_language.md (daily_morning only)
+      weekly_lookback / weekly_prep:
+        - Above PLUS whole-tree scan for applies_to_reports match
     """
     tickers = tickers or []
     out: dict[str, str] = {}
@@ -109,14 +118,18 @@ def load_for_report(report_type: str, tickers: list[str] | None = None) -> dict[
         log.warning("knowledge dir missing: %s", config.KNOWLEDGE_DIR)
         return out
 
-    # Whole-tree scan for applies_to_reports match (skip stubs to conserve tokens)
-    for md in config.KNOWLEDGE_DIR.rglob("*.md"):
-        chunk = _read_chunk(md)
-        if chunk is None or _is_stub(chunk):
-            continue
-        applies = chunk.frontmatter.get("applies_to_reports", [])
-        if isinstance(applies, list) and report_type in applies:
-            out[chunk.source_id] = chunk.body
+    # Whole-tree scan only for weekly reports (fits the ~2000-token budget there
+    # and calibrates against Groq's per-minute cap over the multi-call weekly
+    # flow). Skipped for daily reports since we hit 8K TPM.
+    is_weekly = report_type in {"weekly_lookback", "weekly_prep"}
+    if is_weekly:
+        for md in config.KNOWLEDGE_DIR.rglob("*.md"):
+            chunk = _read_chunk(md)
+            if chunk is None or _is_stub(chunk):
+                continue
+            applies = chunk.frontmatter.get("applies_to_reports", [])
+            if isinstance(applies, list) and report_type in applies:
+                out[chunk.source_id] = chunk.body
 
     # Blue-chip facts for pitched tickers (skip stubs)
     for ticker in tickers:

@@ -311,7 +311,11 @@ def generate(
     # (12K/min) forces this trim; without it, 25+ populated ticker files blow the
     # budget. LLM still receives the full universe list in the system prompt and
     # can pitch any ticker — sampled ones just get the extra facts as context.
-    ticker_sample = _rotating_ticker_sample(date_ist, size=3)
+    # Sample=1: at 3 we hit Groq's 8K TPM org cap; at 1 the pitch prompt fits
+    # under 6.5K with headroom. Rotation still cycles the full populated set
+    # over ~25 days at size=1. See knowledge.load_for_report() header for the
+    # broader budget analysis.
+    ticker_sample = _rotating_ticker_sample(date_ist, size=1)
     kb = knowledge.load_for_report(report_type, tickers=ticker_sample)
     kb_ctx = knowledge.build_context_block(kb)
 
