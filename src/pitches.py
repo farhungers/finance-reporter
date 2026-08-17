@@ -344,8 +344,24 @@ def generate(
     )
     result = llm_client.generate(_SYSTEM_PROMPT, user_prompt, _PITCH_SCHEMA)
     raw = result.parsed.get("pitches", [])
+    total_tin = result.tokens_in
+    total_tout = result.tokens_out
     if len(raw) < 2:
-        raise ValueError(f"LLM returned {len(raw)} pitches, expected at least 2")
+        # gpt-oss-20b (Groq free tier, forced by 8K TPM org cap) is loose on
+        # JSON schema minItems enforcement — sometimes returns 1 pitch. Retry
+        # ONCE with a bolded reminder rather than fail the whole report.
+        log.warning("LLM returned %d pitches; retrying with explicit count reminder", len(raw))
+        retry_prompt = user_prompt + (
+            "\n\n⚠ CRITICAL: your previous response returned fewer than 2 pitches. "
+            "The `pitches` array MUST contain EXACTLY 2 items — this is non-negotiable. "
+            "Produce 2 pitches now."
+        )
+        result = llm_client.generate(_SYSTEM_PROMPT, retry_prompt, _PITCH_SCHEMA)
+        raw = result.parsed.get("pitches", [])
+        total_tin += result.tokens_in
+        total_tout += result.tokens_out
+    if len(raw) < 2:
+        raise ValueError(f"LLM returned {len(raw)} pitches on retry, expected at least 2")
     if len(raw) > 2:
         # Groq JSON mode doesn't strictly enforce maxItems; truncate defensively.
         log.warning("LLM returned %d pitches, truncating to 2", len(raw))
@@ -437,4 +453,4 @@ def generate(
                     (now_utc, report_type, sid, pi.db_id),
                 )
 
-    return pitches, {"tokens_in": result.tokens_in, "tokens_out": result.tokens_out}
+    return pitches, {"tokens_in": total_tin, "tokens_out": total_tout}
