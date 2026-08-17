@@ -60,3 +60,63 @@ def test_truthy_coercion():
     b = {f: 1 for f in FACTORS}
     r = score(b)
     assert r.stars == 5
+
+
+# --- Rubric v1.1 audit tests (2026-08-18 calibration) --------------------
+
+def test_macro_alignment_downgraded_when_fighting_trend():
+    """LONG with spot below 20d MA cannot claim macro_alignment."""
+    b = _all_true()
+    r = score(b, direction="long", spot=95.0, ma20=100.0, reasoning_text="2024 CPI drift analog")
+    assert r.breakdown["macro_alignment"] == 0
+    assert r.stars == 4  # was 5, macro_alignment audit downgraded
+
+
+def test_macro_alignment_kept_when_riding_trend():
+    b = _all_true()
+    r = score(b, direction="long", spot=105.0, ma20=100.0, reasoning_text="2024 CPI drift analog")
+    assert r.breakdown["macro_alignment"] == 1
+
+
+def test_macro_alignment_short_downgraded_when_price_above_ma():
+    b = _all_true()
+    r = score(b, direction="short", spot=105.0, ma20=100.0, reasoning_text="2024 breakdown analog")
+    assert r.breakdown["macro_alignment"] == 0
+
+
+def test_macro_alignment_unchanged_when_trend_unknown():
+    b = _all_true()
+    r = score(b, direction="long", spot=None, ma20=None, reasoning_text="Q3 2024 rebound analog")
+    assert r.breakdown["macro_alignment"] == 1
+
+
+def test_base_rate_downgraded_without_dated_analog():
+    b = _all_true()
+    r = score(b, direction="long", spot=105.0, ma20=100.0, reasoning_text="historically this works")
+    assert r.breakdown["base_rate_support"] == 0
+
+
+def test_base_rate_kept_when_year_cited():
+    b = _all_true()
+    r = score(b, direction="long", spot=105.0, ma20=100.0, reasoning_text="mirrors the 2019 pattern")
+    assert r.breakdown["base_rate_support"] == 1
+
+
+def test_base_rate_kept_on_post_event_phrase():
+    b = _all_true()
+    r = score(b, direction="long", spot=105.0, ma20=100.0, reasoning_text="post-CPI drift setup")
+    assert r.breakdown["base_rate_support"] == 1
+
+
+def test_base_rate_kept_on_quarter_reference():
+    b = _all_true()
+    r = score(b, direction="long", spot=105.0, ma20=100.0, reasoning_text="analog to Q4 2022")
+    assert r.breakdown["base_rate_support"] == 1
+
+
+def test_both_audits_can_downgrade_stars_to_three():
+    b = _all_true()
+    r = score(b, direction="long", spot=95.0, ma20=100.0, reasoning_text="just usually works")
+    assert r.breakdown["macro_alignment"] == 0
+    assert r.breakdown["base_rate_support"] == 0
+    assert r.stars == 3

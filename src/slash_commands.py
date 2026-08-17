@@ -128,3 +128,44 @@ def handle_stats(chat_id: str, now_ist_str: str) -> Optional[str]:
         return None
     _last_stats_reply[chat_id] = now
     return render_stats(now_ist_str)
+
+
+_last_health_reply: dict[str, float] = {}
+
+
+def render_health(now_ist_str: str) -> str:
+    """Compact reliability card: last-send timestamp + staleness flag for each of
+    the 4 scheduled reports. Exists because on 2026-08-14 → 2026-08-18 the LLM
+    provider silently 401'd and 4 straight days of missed reports slipped past
+    the operator. Now: `/health` shows the freshness at a glance."""
+    esc = telegram_send.esc
+    freshness = accuracy.last_send_by_type()
+    lines: list[str] = []
+    lines.append(report_header("💓", "HEALTH", f"as of {now_ist_str} IST"))
+    lines.append(HR)
+    rows: list[str] = []
+    for rt in ("daily_morning", "daily_wrap", "weekly_lookback", "weekly_prep"):
+        info = freshness.get(rt) or {}
+        age = info.get("age_hours")
+        if age is None:
+            label = "NEVER"
+        elif age < 24:
+            label = f"{age:.1f}h ago"
+        else:
+            label = f"{age / 24:.1f}d ago"
+        flag = "🔴 STALE" if info.get("stale") else "🟢 OK"
+        rows.append(f"{pad(rt, 17)} {pad(label, 12)} {flag}")
+    lines.append(code_block(rows))
+    lines.append(HR)
+    lines.append(FOOTER)
+    return "\n".join(lines)
+
+
+def handle_health(chat_id: str, now_ist_str: str) -> Optional[str]:
+    """Same 60s per-chat rate limit as /stats."""
+    now = time.monotonic()
+    last = _last_health_reply.get(chat_id, 0.0)
+    if now - last < _STATS_RATE_LIMIT_SEC:
+        return None
+    _last_health_reply[chat_id] = now
+    return render_health(now_ist_str)

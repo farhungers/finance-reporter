@@ -138,6 +138,20 @@ COMMODITY_SYMBOLS = {
     "NAT_GAS": "NG=F",
 }
 
+# yfinance USD-pair suffix for common crypto tickers. Used only when we need
+# ATR/history for a crypto trade (CoinGecko doesn't cheaply expose OHLC).
+CRYPTO_YF_SUFFIX = {
+    "BTC": "BTC-USD",
+    "ETH": "ETH-USD",
+    "SOL": "SOL-USD",
+    "BNB": "BNB-USD",
+    "XRP": "XRP-USD",
+    "ADA": "ADA-USD",
+    "DOGE": "DOGE-USD",
+    "AVAX": "AVAX-USD",
+    "LINK": "LINK-USD",
+}
+
 
 def commodity_quote(name: str) -> Optional[Quote]:
     sym = COMMODITY_SYMBOLS.get(name.upper())
@@ -148,3 +162,69 @@ def commodity_quote(name: str) -> Optional[Quote]:
         return None
     # Rename to friendly key
     return Quote(name.upper(), q.price, q.prev_close, q.day_change_pct, "commodity")
+
+
+def _yf_symbol_for(symbol: str, asset_class: str) -> Optional[str]:
+    """Resolve a friendly symbol + class to the yfinance ticker string."""
+    ac = asset_class.lower()
+    s = symbol.upper()
+    if ac == "commodity":
+        return COMMODITY_SYMBOLS.get(s)
+    if ac == "crypto":
+        return CRYPTO_YF_SUFFIX.get(s) or (f"{s}-USD" if "-" not in s else s)
+    return s  # equity — friendly symbol is the yfinance ticker
+
+
+def latest_price(symbol: str, asset_class: str) -> Optional[float]:
+    """Unified spot getter across classes. Returns None on any fetch failure —
+    callers must degrade gracefully (§C11: never omit; low_star_warning instead).
+    Crypto path prefers CoinGecko for spot (cheap, reliable) with yfinance fallback."""
+    ac = asset_class.lower()
+    if ac == "crypto":
+        q = coingecko_quote(symbol)
+        if q is not None:
+            return q.price
+    yf_sym = _yf_symbol_for(symbol, ac)
+    if not yf_sym:
+        return None
+    q = yf_quote(yf_sym, ac)
+    return q.price if q is not None else None
+
+
+def ma20(symbol: str, asset_class: str) -> Optional[float]:
+    """20-day simple moving average of closes. Used by rubric.score() to audit
+    the LLM's `macro_alignment` claim: LONG with price under the 20d MA (or
+    SHORT with price above) is fighting the tape and should not earn the
+    factor point. Returns None when history unavailable."""
+    yf_sym = _yf_symbol_for(symbol, asset_class)
+    if not yf_sym:
+        return None
+    bars = yf_history(yf_sym, days=30)
+    closes = [b[4] for b in bars[-20:]]
+    if len(closes) < 20:
+        return None
+    return sum(closes) / 20.0
+
+
+def atr14(symbol: str, asset_class: str) -> Optional[float]:
+    """14-day Average True Range. Used to size SL/TP off market noise instead of
+    LLM-guessed numbers. Returns None if history unavailable — caller must fall
+    back to a percentage-based band.
+
+    TR = max(high-low, |high-prev_close|, |low-prev_close|); ATR = SMA(TR, 14).
+    Standard Wilder-style definition; SMA (not EMA) for simplicity."""
+    yf_sym = _yf_symbol_for(symbol, asset_class)
+    if not yf_sym:
+        return None
+    bars = yf_history(yf_sym, days=30)
+    if len(bars) < 15:
+        return None
+    trs: list[float] = []
+    for i in range(1, len(bars)):
+        _, _, hi, lo, _ = bars[i]
+        _, _, _, _, prev_close = bars[i - 1]
+        tr = max(hi - lo, abs(hi - prev_close), abs(lo - prev_close))
+        trs.append(tr)
+    if len(trs) < 14:
+        return None
+    return sum(trs[-14:]) / 14.0

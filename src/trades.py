@@ -8,10 +8,10 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, date
 from typing import Any, Optional
 
-from src import db, knowledge, llm_client, rubric
+from src import db, knowledge, llm_client, market_data, rubric
 
 log = logging.getLogger(__name__)
 
@@ -129,11 +129,34 @@ Examples that are 0 on the named factor:
   • TP/SL ratio 1.5:1, or SL at a round number → risk_reward=0."""
 
 
+# Weekday → suggested commodity anchor. Breaks the observed "always GOLD"
+# pattern (11/11 commodity trades were GOLD long mean-reversion, 0 TP, all SL).
+# The LLM may deviate — §C11 never-omit + a genuinely stronger setup elsewhere
+# — but the anchor moves the base case so we sample the full commodity space
+# across the week instead of one instrument, one playbook.
+_COMMODITY_DOW = {
+    0: "GOLD",       # Monday
+    1: "OIL_WTI",    # Tuesday
+    2: "COPPER",     # Wednesday
+    3: "SILVER",     # Thursday
+    4: "NAT_GAS",    # Friday
+}
+
+
+def _suggested_commodity(date_ist: str) -> str:
+    try:
+        d = date.fromisoformat(date_ist)
+    except Exception:
+        return "GOLD"
+    return _COMMODITY_DOW.get(d.weekday(), "GOLD")
+
+
 def _build_user_prompt(
     date_ist: str,
     market_snapshot: str,
     calendar_summary: str,
     knowledge_context: str,
+    suggested_commodity: str,
 ) -> str:
     return f"""DATE: {date_ist} IST
 
@@ -145,8 +168,77 @@ TODAY'S CALENDAR (IST):
 
 {knowledge_context}
 
+COMMODITY ROTATION ANCHOR: {suggested_commodity}
+(Default to this commodity today unless a materially stronger setup exists in
+another commodity. Rotation exists to prevent single-instrument, single-playbook
+concentration — data through 2026-08-13 showed 100% SL hit rate on 11 straight
+GOLD-long mean-reversion trades. Deviate only when justified.)
+
 Produce exactly 3 trades: 1 commodity, 1 equity, 1 crypto. Per schema.
 """
+
+
+_ENTRY_SNAP_TOLERANCE = 0.02   # snap entry to spot if LLM number deviates >2%
+_ATR_SL_MULT = 1.5             # SL = spot ± 1.5 × ATR14
+_MIN_RR = 2.0                  # enforce TP/SL ratio ≥ 2:1
+
+
+def _ground_prices(
+    symbol: str,
+    asset_class: str,
+    direction: str,
+    llm_entry: float,
+    llm_tp: float,
+    llm_sl: float,
+) -> tuple[float, float, float, list[str]]:
+    """Re-anchor LLM-guessed entry/tp/sl to live spot + 14d ATR.
+
+    Prior LLM (Groq Llama 3.3 70B) was inventing entries from training-data
+    memory: NVDA@520, MSFT@280, BTC@63k — all months-stale. Result: 60% SL rate
+    across the trade book. This snaps the numbers to reality:
+
+      • Entry: if |llm - spot|/spot > 2%, snap to spot
+      • SL: 1.5 × 14d ATR away from entry (Wilder-standard breathing room)
+      • TP: 2.0 × the SL distance in the trade direction (locks R:R ≥ 2:1)
+
+    If market data is unavailable, we ship the LLM's numbers unchanged with a
+    warning (§C11: never omit — the friend sees stars + reasoning and decides).
+    Returns (entry, tp, sl, snap_notes)."""
+    notes: list[str] = []
+    spot = market_data.latest_price(symbol, asset_class)
+    if spot is None or spot <= 0:
+        notes.append("spot_unavailable")
+        return llm_entry, llm_tp, llm_sl, notes
+
+    entry = llm_entry
+    dev = abs(llm_entry - spot) / spot
+    if dev > _ENTRY_SNAP_TOLERANCE:
+        notes.append(f"entry_snapped:{llm_entry:.4g}->{spot:.4g} (dev={dev:.1%})")
+        entry = spot
+
+    atr = market_data.atr14(symbol, asset_class)
+    if atr is None or atr <= 0:
+        # No history → keep LLM's SL/TP relative to (possibly snapped) entry.
+        # Preserve original absolute distances if entry was snapped.
+        if entry != llm_entry:
+            sl_dist = abs(llm_entry - llm_sl)
+            tp_dist = abs(llm_entry - llm_tp)
+            if direction.lower() == "long":
+                return entry, entry + tp_dist, entry - sl_dist, notes + ["atr_unavailable"]
+            return entry, entry - tp_dist, entry + sl_dist, notes + ["atr_unavailable"]
+        notes.append("atr_unavailable")
+        return entry, llm_tp, llm_sl, notes
+
+    sl_dist = _ATR_SL_MULT * atr
+    tp_dist = _MIN_RR * sl_dist
+    if direction.lower() == "long":
+        sl = entry - sl_dist
+        tp = entry + tp_dist
+    else:
+        sl = entry + sl_dist
+        tp = entry - tp_dist
+    notes.append(f"atr_sized:atr={atr:.4g} sl_dist={sl_dist:.4g} tp_dist={tp_dist:.4g}")
+    return entry, tp, sl, notes
 
 
 def generate(
@@ -159,7 +251,10 @@ def generate(
     kb = knowledge.load_for_report(report_type, tickers=[])
     kb_ctx = knowledge.build_context_block(kb)
 
-    user_prompt = _build_user_prompt(date_ist, market_snapshot, calendar_summary, kb_ctx)
+    user_prompt = _build_user_prompt(
+        date_ist, market_snapshot, calendar_summary, kb_ctx,
+        suggested_commodity=_suggested_commodity(date_ist),
+    )
     result = llm_client.generate(_SYSTEM_PROMPT, user_prompt, _TRADE_SCHEMA)
     raw = result.parsed
 
@@ -168,7 +263,31 @@ def generate(
         if klass not in raw:
             raise ValueError(f"LLM missing trade class: {klass}")
         t = raw[klass]
-        rs = rubric.score(t["rubric"], earnings_within_3d=False)
+        sym = t["asset_symbol"].upper()
+        direction = t["direction"]
+        entry, tp, sl, snap_notes = _ground_prices(
+            sym, klass, direction,
+            float(t["entry"]), float(t["tp"]), float(t["sl"]),
+        )
+        for note in snap_notes:
+            log.info("trade %s %s ground_prices: %s", klass, sym, note)
+        # Since Python now enforces ATR-sized SL + R:R ≥ 2:1, force risk_reward=1
+        # when we successfully re-anchored (any "atr_sized" note). This prevents
+        # the LLM from tanking the star rating with a conservative FALSE after
+        # we already ensured the constraint.
+        rubric_in = dict(t["rubric"])
+        if any(n.startswith("atr_sized") for n in snap_notes):
+            rubric_in["risk_reward"] = True
+        # Rubric v1.1 audit inputs: trend (ma20) verifies macro_alignment;
+        # reasoning text is scanned for a dated analog anchor for base_rate_support.
+        rs = rubric.score(
+            rubric_in,
+            earnings_within_3d=False,
+            direction=direction,
+            spot=market_data.latest_price(sym, klass),
+            ma20=market_data.ma20(sym, klass),
+            reasoning_text=t.get("one_line_reasoning", ""),
+        )
         low_warn = t.get("low_star_warning") if rs.stars <= 1 else None
         reasoning = t["one_line_reasoning"].strip()
         # §D.7: verbatim-paste detection also applies to trade reasoning.
@@ -177,16 +296,16 @@ def generate(
             for sid, phrase in vh[:2]:
                 log.warning(
                     "trade %s reasoning contains verbatim chunk from %s: %r",
-                    t["asset_symbol"], sid, phrase,
+                    sym, sid, phrase,
                 )
         trades.append(
             Trade(
-                asset_symbol=t["asset_symbol"].upper(),
+                asset_symbol=sym,
                 asset_class=klass,
-                direction=t["direction"],
-                entry=float(t["entry"]),
-                tp=float(t["tp"]),
-                sl=float(t["sl"]),
+                direction=direction,
+                entry=entry,
+                tp=tp,
+                sl=sl,
                 one_line_reasoning=reasoning,
                 star_rating=rs.stars,
                 rubric_breakdown=rs.breakdown,

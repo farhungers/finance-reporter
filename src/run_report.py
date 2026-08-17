@@ -25,7 +25,7 @@ try:
 except Exception:
     pass
 
-from src import config, db, knowledge, scheduler, telegram_send
+from src import config, db, knowledge, llm_client, scheduler, telegram_send
 from src.market_data import BLUE_CHIP_UNIVERSE
 from src.reports import daily_morning, daily_wrap, weekly_lookback, weekly_prep
 
@@ -88,6 +88,27 @@ def main() -> int:
         scheduler._backup_db()
         return 0
     if kind in REPORTS:
+        # Preflight LLM canary — surfaces auth failures with a specific alert
+        # BEFORE the expensive fetch path (calendar + news + market). Skip for
+        # weekly_lookback since it doesn't call the LLM (rendered from DB rows
+        # via accuracy.stats_snapshot). Keeps the lookback resilient to a bad
+        # key: the operator still gets Saturday's calibration report even when
+        # daily reports are down.
+        if kind != "weekly_lookback":
+            try:
+                llm_client.ping()
+            except Exception as e:
+                log.error("LLM preflight FAILED: %s", e)
+                try:
+                    telegram_send.send(
+                        telegram_send.esc(
+                            f"⚠ {kind} aborted: LLM key invalid ({config.LLM_PROVIDER}). "
+                            f"Rotate GROQ_API_KEY and re-run. Error: {type(e).__name__}"
+                        )
+                    )
+                except Exception:
+                    pass
+                return 4
         return _run_report(kind)
 
     _usage()

@@ -23,6 +23,7 @@ from src import config, db, slash_commands, telegram_send
 log = logging.getLogger(__name__)
 
 _STATS_RE = re.compile(r"^/stats(?:@\w+)?(?:\s+.*)?$", re.IGNORECASE)
+_HEALTH_RE = re.compile(r"^/health(?:@\w+)?(?:\s+.*)?$", re.IGNORECASE)
 
 
 def _extract_message(update: dict[str, Any]) -> Optional[dict[str, Any]]:
@@ -38,6 +39,12 @@ def _is_stats_command(text: Optional[str]) -> bool:
     if not text:
         return False
     return bool(_STATS_RE.match(text.strip()))
+
+
+def _is_health_command(text: Optional[str]) -> bool:
+    if not text:
+        return False
+    return bool(_HEALTH_RE.match(text.strip()))
 
 
 def _now_ist_str() -> str:
@@ -96,20 +103,24 @@ def process_updates(updates: list[dict[str, Any]]) -> int:
         chat = msg.get("chat", {}) or {}
         chat_id = str(chat.get("id", "")) if chat.get("id") is not None else None
         text = msg.get("text") or ""
-        if not _is_stats_command(text):
+        stripped = text.strip()
+        if _is_stats_command(stripped):
+            command, handler = "/stats", slash_commands.handle_stats
+        elif _is_health_command(stripped):
+            command, handler = "/health", slash_commands.handle_health
+        else:
             _record_seen(int(uid), chat_id, None)
             continue
-        # It's a /stats command — try to reply
-        reply = slash_commands.handle_stats(chat_id or "", _now_ist_str())
+        reply = handler(chat_id or "", _now_ist_str())
         if reply is None:
-            log.info("update %s: /stats rate-limited for chat %s", uid, chat_id)
-            _record_seen(int(uid), chat_id, "/stats:rate_limited")
+            log.info("update %s: %s rate-limited for chat %s", uid, command, chat_id)
+            _record_seen(int(uid), chat_id, f"{command}:rate_limited")
             continue
         message_id = telegram_send.send(reply, chat_id=chat_id)
         _record_send(chat_id, message_id, len(reply))
-        _record_seen(int(uid), chat_id, "/stats")
+        _record_seen(int(uid), chat_id, command)
         replied += 1
-        log.info("update %s: /stats replied to chat %s (msg_id=%s)", uid, chat_id, message_id)
+        log.info("update %s: %s replied to chat %s (msg_id=%s)", uid, command, chat_id, message_id)
     return replied
 
 

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Optional
 
-from src import config, db, knowledge, llm_client, rubric
+from src import config, db, knowledge, llm_client, market_data, rubric
 from src.earnings import check_earnings
 from src.market_data import BLUE_CHIP_UNIVERSE
 
@@ -95,7 +95,7 @@ _PITCH_SCHEMA: dict[str, Any] = {
                         "type": "array",
                         "items": {"type": "string"},
                     },
-                    "horizon_days": {"type": "integer", "minimum": 1, "maximum": 30},
+                    "horizon_days": {"type": "integer", "minimum": 1, "maximum": 15},
                     "earnings_direction_expectation": {"type": "string"},
                 },
                 "required": [
@@ -136,7 +136,7 @@ OTHER FIELDS:
 - rough_entry_hint: freeform, natural language ("near $185 support", "on pullback to 50-day average"). Not a precise number.
 - knowledge_sources_used: cite EVERY source_id from the KNOWLEDGE LIBRARY block that shaped this pitch. NEVER paste text verbatim — transform and apply. If a pitch used no knowledge chunks, return [].
 - For each pitch with EARNINGS_WITHIN_3D marked, you MUST include earnings_direction_expectation ('bullish' / 'bearish' / 'unknown') AND mention the earnings date + expected impact in the thesis.
-- horizon_days: typical hold window (5-15 for tactical, up to 30 for slower thematic).
+- horizon_days: hold window; DEFAULT 5-7 (tactical). Cap 15. Long horizons prevent the resolver from grading pitches in time for the weekly look-back — prior data through 2026-08-13 had 25/26 pitches still_open because horizons were too long.
 - low_star_warning (only when your rubric booleans sum to 0 or 1): 1 line, plain English, non-joking — explain honestly why shipping despite low conviction. Something the FA can say: "no near-term catalyst; treat as watch-list only". Omit or leave empty when stars≥2.
 
 RUBRIC — you output 5 booleans; Python sums them. Be STRICT. Default to FALSE when the criterion is not clearly met. A 5/5 should be rare (~10% of days). Star inflation destroys the calibration loop.
@@ -192,6 +192,25 @@ The Python layer will:
 """
 
 
+_COOLDOWN_SESSIONS = 5   # skip any ticker picked in the last N daily_morning reports
+
+
+def _recent_pitch_tickers(sessions: int = _COOLDOWN_SESSIONS) -> set[str]:
+    """Return the set of tickers picked in the last N daily_morning report_dates.
+    Enforces rotation discipline: prior data showed MSFT×7, AAPL×5, GOOGL×3 =
+    15/26 pitches from 3 tickers — no rotation. This filter breaks that."""
+    with db.connect() as conn:
+        rows = conn.execute(
+            """SELECT DISTINCT asset_symbol FROM pitches
+               WHERE report_date IN (
+                 SELECT DISTINCT report_date FROM pitches
+                 ORDER BY report_date DESC LIMIT ?
+               )""",
+            (sessions,),
+        ).fetchall()
+    return {r[0] for r in rows}
+
+
 def _rotating_ticker_sample(date_ist: str, size: int = 3) -> list[str]:
     """Deterministic day-seeded rotating slice — sampled from *populated* ticker
     fact files only, so the LLM always gets real context (not stubs). Same date
@@ -234,8 +253,21 @@ def _build_user_prompt(
     news_summary: str,
     knowledge_context: str,
     earnings_flags: dict[str, dict[str, Any]],
+    excluded_tickers: Optional[set[str]] = None,
 ) -> str:
-    universe = ", ".join(BLUE_CHIP_UNIVERSE)
+    excl = excluded_tickers or set()
+    filtered = [t for t in BLUE_CHIP_UNIVERSE if t not in excl]
+    # If cooldown wiped >80% of the universe (unlikely at 100 tickers, but be
+    # safe), fall back to the full list — §C11 never omit beats hollow rotation.
+    if len(filtered) < 20:
+        filtered = list(BLUE_CHIP_UNIVERSE)
+    universe = ", ".join(filtered)
+    cooldown_note = ""
+    if excl and filtered is not BLUE_CHIP_UNIVERSE:
+        cooldown_note = (
+            f"\n(Cooldown: {len(excl)} ticker(s) picked in the last "
+            f"{_COOLDOWN_SESSIONS} sessions are excluded above.)\n"
+        )
     earnings_lines = []
     for t, info in earnings_flags.items():
         earnings_lines.append(
@@ -246,7 +278,7 @@ def _build_user_prompt(
     return f"""DATE: {date_ist} IST
 
 BLUE_CHIP_UNIVERSE (choose exactly 2, distinct):
-{universe}
+{universe}{cooldown_note}
 
 TODAY'S CALENDAR (IST):
 {calendar_summary}
@@ -301,8 +333,10 @@ def generate(
                 "td": ei.trading_days_until,
             }
 
+    excluded = _recent_pitch_tickers()
     user_prompt = _build_user_prompt(
         date_ist, calendar_summary, market_snapshot, news_summary, kb_ctx, earnings_flags,
+        excluded_tickers=excluded,
     )
     result = llm_client.generate(_SYSTEM_PROMPT, user_prompt, _PITCH_SCHEMA)
     raw = result.parsed.get("pitches", [])
@@ -321,7 +355,17 @@ def generate(
         # Post-hoc earnings check for the chosen ticker
         ei = check_earnings(sym)
         within_3d = bool(ei and ei.within_3_trading_days)
-        rs = rubric.score(p["rubric"], earnings_within_3d=within_3d)
+        # Rubric v1.1 audit inputs: trend + reasoning text (thesis + key_factors)
+        # scanned for macro_alignment / base_rate_support truthfulness.
+        audit_text = p.get("thesis", "") + " " + " ".join(p.get("key_factors") or [])
+        rs = rubric.score(
+            p["rubric"],
+            earnings_within_3d=within_3d,
+            direction=p.get("direction"),
+            spot=market_data.latest_price(sym, "equity"),
+            ma20=market_data.ma20(sym, "equity"),
+            reasoning_text=audit_text,
+        )
         low_warn = p.get("low_star_warning") if rs.stars <= 1 else None
         thesis_text = p["thesis"].strip()
         if within_3d and not _thesis_mentions_date(thesis_text):
@@ -357,7 +401,7 @@ def generate(
                 earnings_date_ist=(ei.next_earnings_date.isoformat() if within_3d and ei else None),
                 earnings_direction_expectation=p.get("earnings_direction_expectation"),
                 knowledge_sources_used=list(p.get("knowledge_sources_used") or []),
-                horizon_days=int(p.get("horizon_days") or 7),
+                horizon_days=min(int(p.get("horizon_days") or 7), 15),
             )
         )
 

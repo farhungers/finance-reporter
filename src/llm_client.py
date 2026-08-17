@@ -36,3 +36,23 @@ def generate(
     response_schema: dict[str, Any],
 ) -> GenerateResult:
     return _get_provider().generate(system, user, response_schema)
+
+
+_PING_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"ok": {"type": "boolean"}},
+    "required": ["ok"],
+}
+
+
+def ping() -> None:
+    """Cheap preflight — proves the provider credentials work. Raises on failure.
+
+    Called at run_report entry so an invalid API key fails BEFORE the expensive
+    generation path and the operator gets a specific alert instead of a generic
+    'report failed'. Costs ~50 tokens per call, well under any free-tier budget."""
+    _get_provider().generate(
+        "Respond with the literal JSON {\"ok\": true}. Nothing else.",
+        "ping",
+        _PING_SCHEMA,
+    )

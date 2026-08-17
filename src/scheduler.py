@@ -45,6 +45,19 @@ def _record_send(report_type: str, text: str, message_id: int | None, telemetry:
         )
 
 
+def _alert_operator(report_type: str, err: Exception) -> None:
+    """Best-effort Telegram alert on generation failure. Mirrors §E.24 backup
+    LOUD-fail pattern. Never raises — swallowing is fine here because the caller
+    will re-raise the original error for workflow-step visibility."""
+    try:
+        msg = telegram_send.esc(
+            f"⚠ {report_type} generation FAILED: {type(err).__name__}: {err}"
+        )
+        telegram_send.send(msg)
+    except Exception:
+        pass
+
+
 def _run_report(report_type: str, gen_fn: Callable[[], tuple[str, dict]]) -> None:
     kill = config.KILL_SWITCH_BY_REPORT.get(report_type, lambda: False)()
     if kill:
@@ -54,8 +67,13 @@ def _run_report(report_type: str, gen_fn: Callable[[], tuple[str, dict]]) -> Non
     try:
         text, telemetry = gen_fn()
     except Exception as e:
+        # §E.24 pattern: LOUD failure — alert operator, then re-raise so the
+        # workflow step exits non-zero. Silent swallow (prior behavior) let 4
+        # straight days of missed reports (2026-08-14 → 2026-08-18) slip past
+        # while workflow_conclusion stayed "success". Never again.
         log.exception("report %s generation failed: %s", report_type, e)
-        return
+        _alert_operator(report_type, e)
+        raise
     message_id = telegram_send.send(text)
     _record_send(report_type, text, message_id, telemetry, kill=False)
 

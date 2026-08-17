@@ -1,6 +1,10 @@
-"""Groq Llama 3.3 70B fallback provider — config swap only.
+"""Groq openai/gpt-oss-120b provider — config swap only.
 
-Free tier: 30 RPM, 12K TPM. Switch by setting LLM_PROVIDER=groq in .env.
+Model swapped 2026-08-18 after Groq deprecated `llama-3.3-70b-versatile`
+(404 model_not_found from 2026-08-17). `openai/gpt-oss-120b` is Groq's current
+featured production model at 120B params + 131k context, still free-tier.
+
+Free tier: 30 RPM, ~12K TPM. Switch by setting LLM_PROVIDER=groq in .env.
 Weekly reports can exceed 12K TPM in a single call once the knowledge library
 is populated; we handle 429s by sleeping the retry-after window before retry.
 """
@@ -16,7 +20,7 @@ from src.llm_providers.base import GenerateResult, Provider
 
 log = logging.getLogger(__name__)
 
-_MODEL_NAME = "llama-3.3-70b-versatile"
+_MODEL_NAME = "openai/gpt-oss-120b"
 _MAX_RATE_LIMIT_SLEEP = 90  # cap in seconds — protects the 10-min workflow timeout
 
 

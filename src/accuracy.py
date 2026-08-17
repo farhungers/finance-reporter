@@ -37,6 +37,95 @@ class Stats:
     open_positions: list[dict] = field(default_factory=list)  # summarized open trades/pitches
 
 
+# Freshness thresholds for /health — a daily_morning older than 26h is red
+# (5h slack past the 07:00 IST target); weekly reports older than 8 days red.
+_FRESHNESS_STALE_HOURS = {
+    "daily_morning": 26,
+    "daily_wrap": 26,
+    "weekly_lookback": 24 * 8,
+    "weekly_prep": 24 * 8,
+}
+
+
+def knowledge_source_lift(min_n: int = 5) -> list[dict]:
+    """Correlate each knowledge source_id with pitch/trade outcome quality.
+
+    Returns [{source_id, n_pitches, played_out, failed, noise, still_open,
+    n_trades, hit_tp, hit_sl, expired, played_out_pct}] sorted by n desc.
+    Sources with n < min_n are excluded — small samples produce noise.
+
+    §D.7 explicitly promises this correlation as the pruning signal for the
+    knowledge library ("prune/correct the library over time"). This scaffold
+    unblocks weekly_lookback's KNOWLEDGE LIBRARY REPORT block from §D.1.c
+    once n≥20 across pitches with knowledge_sources_used populated."""
+    out: dict[str, dict] = {}
+    with db.connect() as conn:
+        rows = conn.execute(
+            """SELECT kh.source_id, p.resolution AS p_res, t.resolution AS t_res
+               FROM knowledge_hits kh
+               LEFT JOIN pitches p ON kh.pitch_id = p.id
+               LEFT JOIN trades  t ON kh.trade_id = t.id"""
+        ).fetchall()
+    for r in rows:
+        sid = r["source_id"]
+        d = out.setdefault(sid, {
+            "source_id": sid,
+            "n_pitches": 0, "played_out": 0, "failed": 0, "noise": 0, "still_open_p": 0,
+            "n_trades": 0, "hit_tp": 0, "hit_sl": 0, "expired": 0, "still_open_t": 0,
+        })
+        if r["p_res"] is not None:
+            d["n_pitches"] += 1
+            key = {"thesis_played_out": "played_out", "thesis_failed": "failed",
+                   "noise": "noise", "still_open": "still_open_p"}.get(r["p_res"], "still_open_p")
+            d[key] += 1
+        elif r["t_res"] is not None:
+            d["n_trades"] += 1
+            key = {"hit_tp": "hit_tp", "hit_sl": "hit_sl",
+                   "expired": "expired", "still_open": "still_open_t"}.get(r["t_res"], "still_open_t")
+            d[key] += 1
+    filtered: list[dict] = []
+    for d in out.values():
+        n_total = d["n_pitches"] + d["n_trades"]
+        if n_total < min_n:
+            continue
+        resolved_p = d["played_out"] + d["failed"] + d["noise"]
+        d["played_out_pct"] = (d["played_out"] / resolved_p) if resolved_p else None
+        resolved_t = d["hit_tp"] + d["hit_sl"] + d["expired"]
+        d["tp_pct"] = (d["hit_tp"] / resolved_t) if resolved_t else None
+        filtered.append(d)
+    filtered.sort(key=lambda d: (d["n_pitches"] + d["n_trades"]), reverse=True)
+    return filtered
+
+
+def last_send_by_type() -> dict[str, dict]:
+    """Return {report_type: {last_sent_utc, age_hours, stale, message_id}} for
+    the 4 scheduled reports. Feeds /health so the operator can see coverage at
+    a glance instead of finding out 4 days later like on 2026-08-18."""
+    out: dict[str, dict] = {}
+    now = datetime.now(UTC)
+    with db.connect() as conn:
+        for rt in ("daily_morning", "daily_wrap", "weekly_lookback", "weekly_prep"):
+            row = conn.execute(
+                """SELECT sent_at, telegram_message_id FROM report_sends
+                   WHERE report_type = ? AND telegram_message_id IS NOT NULL
+                   ORDER BY sent_at DESC LIMIT 1""",
+                (rt,),
+            ).fetchone()
+            if not row:
+                out[rt] = {"last_sent_utc": None, "age_hours": None, "stale": True, "message_id": None}
+                continue
+            sent = datetime.fromisoformat(row["sent_at"].replace("Z", "+00:00"))
+            age_h = (now - sent).total_seconds() / 3600.0
+            threshold = _FRESHNESS_STALE_HOURS.get(rt, 24)
+            out[rt] = {
+                "last_sent_utc": row["sent_at"],
+                "age_hours": round(age_h, 1),
+                "stale": age_h > threshold,
+                "message_id": row["telegram_message_id"],
+            }
+    return out
+
+
 def _trading_days_between(d0: date, d1: date) -> int:
     if d1 <= d0:
         return 0
