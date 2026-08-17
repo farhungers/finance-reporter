@@ -280,6 +280,11 @@ def _build_user_prompt(
         )
     earnings_block = "\n".join(earnings_lines) if earnings_lines else "(no pitched-universe earnings within 3 trading days flagged this morning)"
 
+    # news_summary intentionally dropped from prompt 2026-08-18 — Groq's 8K TPM
+    # org cap made every daily_morning fail; news pulse was ~500 tokens with the
+    # least direct signal for pitch quality (calendar + earnings drive the
+    # catalyst, market_snapshot drives the setup). If we get provider headroom
+    # back later, restore it.
     return f"""DATE: {date_ist} IST
 
 BLUE_CHIP_UNIVERSE (choose exactly 2, distinct):
@@ -290,9 +295,6 @@ TODAY'S CALENDAR (IST):
 
 MARKET SNAPSHOT:
 {market_snapshot}
-
-NEWS PULSE (headlines only — do not quote verbatim):
-{news_summary}
 
 EARNINGS-WITHIN-3D FLAGS:
 {earnings_block}

@@ -145,8 +145,11 @@ def load_for_report(report_type: str, tickers: list[str] | None = None) -> dict[
         if c and c.body and not _is_stub(c):
             out[c.source_id] = c.body
 
-    # For pitch-generating reports: client language (real content, not stub)
-    if report_type in {"daily_morning", "weekly_prep"}:
+    # For pitch-generating reports: client language (real content, not stub).
+    # 2026-08-18: daily_morning skips this — the 20b model can't nail voice
+    # well anyway, and the ~200 tokens matter under the 8K TPM cap. weekly_prep
+    # keeps it since that report has full TPM headroom via the multi-call flow.
+    if report_type == "weekly_prep":
         p = config.KNOWLEDGE_DIR / "house_view" / "client_language.md"
         if p.exists():
             c = _read_chunk(p)

@@ -157,16 +157,13 @@ class GroqProvider(Provider):
                     # Low temperature keeps constrained-decoding stable; some
                     # thesis-prose variety loss is worth the reliability win.
                     temperature=0.15,
-                    # Explicit output budget — SDK default was truncating our
-                    # responses mid-JSON. CRITICAL: Groq's per-org 8K TPM cap
-                    # counts REQUESTED tokens (prompt + max_completion_tokens
-                    # reserved), NOT consumed tokens. Confirmed 2026-08-17
-                    # 22:17Z: 6000 reserve + ~3200 prompt = 9199 requested →
-                    # 413 rate_limit_exceeded even though output would be much
-                    # smaller. 4000 gives us prompt (~3200) + reserve (4000) =
-                    # 7200 < 8000. Still ~3000 words of output — enough for 2
-                    # full pitches with thesis prose or 3 trades with reasoning.
-                    max_completion_tokens=4000,
+                    # Explicit output budget — Groq's per-org 8K TPM cap counts
+                    # REQUESTED tokens (prompt + max_completion_tokens reserved),
+                    # NOT consumed. Actual prompt runs ~4800 tokens after our
+                    # trims. 2500 reserve keeps us at ~7300 < 8000 with margin
+                    # for prompt drift. Still ~1900 words of output = enough for
+                    # 2 pitches with tight thesis prose.
+                    max_completion_tokens=2500,
                 )
                 text = resp.choices[0].message.content or ""
                 parsed = json.loads(text)
@@ -181,7 +178,14 @@ class GroqProvider(Provider):
             except Exception as e:
                 last_error = e
                 err_str = str(e).lower()
-                is_rate_limit = "rate_limit" in err_str or "429" in err_str or "tokens per minute" in err_str
+                # 413 "Request too large" is NOT retryable — sleeping doesn't
+                # shrink the request. Bail immediately so the operator gets
+                # the alert fast instead of after 3 × 60s sleeps.
+                if "request too large" in err_str or "413" in err_str:
+                    log.warning("groq request too large (non-retryable): %s", e)
+                    break
+                # 429/rolling-window rate limit — sleeping DOES help.
+                is_rate_limit = "429" in err_str or "tokens per minute" in err_str
                 if is_rate_limit and attempt < 2:
                     hint = _parse_retry_after(e)
                     sleep_s = min(_MAX_RATE_LIMIT_SLEEP, max(60.0, hint or 60.0))

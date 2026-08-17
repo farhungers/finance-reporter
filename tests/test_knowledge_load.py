@@ -23,9 +23,16 @@ def test_load_returns_house_view_active_themes_always():
     assert any("active_themes.md" in sid for sid in out), out.keys()
 
 
-def test_load_returns_client_language_for_pitch_reports():
-    out = knowledge.load_for_report("daily_morning", tickers=[])
+def test_load_returns_client_language_for_weekly_prep():
+    # 2026-08-18: daily_morning drops client_language to fit Groq's 8K TPM cap.
+    # weekly_prep still loads it since that flow has multi-call TPM headroom.
+    out = knowledge.load_for_report("weekly_prep", tickers=[])
     assert any("client_language.md" in sid for sid in out)
+
+
+def test_load_omits_client_language_for_daily_morning():
+    out = knowledge.load_for_report("daily_morning", tickers=[])
+    assert not any("client_language.md" in sid for sid in out)
 
 
 def test_load_omits_client_language_for_wrap():
