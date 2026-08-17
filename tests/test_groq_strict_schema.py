@@ -86,17 +86,16 @@ def test_nullable_optional_field_becomes_union_type():
 
 
 def test_real_pitch_schema_strictifies_cleanly():
+    # 2026-08-18 audit: schema switched from array-of-pitches (minItems=2 not
+    # enforced by constrained decoder) to named-slot pitch_1/pitch_2 pattern.
     s = _make_strict(_PITCH_SCHEMA)
     assert s["additionalProperties"] is False
-    pitches_arr = s["properties"]["pitches"]
-    assert pitches_arr["type"] == "array"
-    item = pitches_arr["items"]
-    assert item["additionalProperties"] is False
-    # Every original property must now be required
-    orig_props = _PITCH_SCHEMA["properties"]["pitches"]["items"]["properties"]
-    assert set(item["required"]) == set(orig_props.keys())
-    # Nested rubric object also strictified
-    assert item["properties"]["rubric"]["additionalProperties"] is False
+    assert set(s["required"]) == {"pitch_1", "pitch_2"}
+    for slot in ("pitch_1", "pitch_2"):
+        item = s["properties"][slot]
+        assert item["additionalProperties"] is False
+        # Nested rubric object also strictified
+        assert item["properties"]["rubric"]["additionalProperties"] is False
 
 
 def test_real_trade_schema_strictifies_cleanly():

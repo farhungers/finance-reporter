@@ -67,6 +67,6 @@ def test_pitch_prompt_keeps_universe_when_cooldown_empty():
 
 
 def test_pitch_horizon_capped_at_15():
-    # Schema-level cap; sanity check via the constant/schema.
-    schema = pitches._PITCH_SCHEMA["properties"]["pitches"]["items"]["properties"]["horizon_days"]
+    # Named-slot schema (2026-08-18) — check via pitch_1's horizon_days field.
+    schema = pitches._PITCH_SCHEMA["properties"]["pitch_1"]["properties"]["horizon_days"]
     assert schema["maximum"] == 15

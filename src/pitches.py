@@ -56,63 +56,68 @@ class Pitch:
     db_id: Optional[int] = None
 
 
+# Named-slot schema (pitch_1 + pitch_2) instead of an array. Rationale
+# (2026-08-18 audit): Groq's strict json_schema constrained decoder enforces
+# types + required fields + enums reliably, but does NOT reliably enforce array
+# `minItems` — model can still emit 1-item arrays and Groq's post-validator
+# rejects the whole response. Named slots make BOTH pitches structurally
+# required at the schema level, matching the pattern already used for trades
+# (commodity/equity/crypto). Same downstream contract: 2 pitches always ship.
+_PITCH_ITEM_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "asset_symbol": {"type": "string"},
+        "direction": {"type": "string", "enum": ["long", "short", "neutral"]},
+        "thesis": {"type": "string"},
+        "key_factors": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 4,
+            "items": {"type": "string"},
+        },
+        "rough_entry_hint": {"type": "string"},
+        "rubric": {
+            "type": "object",
+            "properties": {
+                "macro_alignment": {"type": "boolean"},
+                "technical_setup": {"type": "boolean"},
+                "catalyst_proximity": {"type": "boolean"},
+                "base_rate_support": {"type": "boolean"},
+                "risk_reward": {"type": "boolean"},
+            },
+            "required": [
+                "macro_alignment", "technical_setup", "catalyst_proximity",
+                "base_rate_support", "risk_reward",
+            ],
+        },
+        "low_star_warning": {"type": "string"},
+        "knowledge_sources_used": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "horizon_days": {"type": "integer", "minimum": 1, "maximum": 15},
+        "earnings_direction_expectation": {"type": "string"},
+    },
+    "required": [
+        "asset_symbol", "direction", "thesis", "key_factors",
+        "rough_entry_hint", "rubric", "knowledge_sources_used", "horizon_days",
+    ],
+}
+
 _PITCH_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "pitches": {
-            "type": "array",
-            "minItems": 2,
-            "maxItems": 2,
-            "items": {
-                "type": "object",
-                "properties": {
-                    "asset_symbol": {"type": "string"},
-                    "direction": {"type": "string", "enum": ["long", "short", "neutral"]},
-                    "thesis": {"type": "string"},
-                    "key_factors": {
-                        "type": "array",
-                        "minItems": 2,
-                        "maxItems": 4,
-                        "items": {"type": "string"},
-                    },
-                    "rough_entry_hint": {"type": "string"},
-                    "rubric": {
-                        "type": "object",
-                        "properties": {
-                            "macro_alignment": {"type": "boolean"},
-                            "technical_setup": {"type": "boolean"},
-                            "catalyst_proximity": {"type": "boolean"},
-                            "base_rate_support": {"type": "boolean"},
-                            "risk_reward": {"type": "boolean"},
-                        },
-                        "required": [
-                            "macro_alignment", "technical_setup", "catalyst_proximity",
-                            "base_rate_support", "risk_reward",
-                        ],
-                    },
-                    "low_star_warning": {"type": "string"},
-                    "knowledge_sources_used": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
-                    "horizon_days": {"type": "integer", "minimum": 1, "maximum": 15},
-                    "earnings_direction_expectation": {"type": "string"},
-                },
-                "required": [
-                    "asset_symbol", "direction", "thesis", "key_factors",
-                    "rough_entry_hint", "rubric", "knowledge_sources_used", "horizon_days",
-                ],
-            },
-        }
+        "pitch_1": _PITCH_ITEM_SCHEMA,
+        "pitch_2": _PITCH_ITEM_SCHEMA,
     },
-    "required": ["pitches"],
+    "required": ["pitch_1", "pitch_2"],
 }
 
 
 _SYSTEM_PROMPT = """You are a disciplined equity strategist producing 2 blue-chip pitches for a Wall Street financial advisor's morning briefing.
 
 STRICT RULES:
-- The `pitches` array MUST contain EXACTLY 2 items — no more, no fewer. This is non-negotiable.
+- Output MUST contain EXACTLY two top-level keys: `pitch_1` and `pitch_2`. Both are non-negotiable.
 - Pick exactly 2 distinct tickers from the provided BLUE_CHIP_UNIVERSE. Never pick outside it.
 - Directions may repeat but assets must not.
 
@@ -294,7 +299,7 @@ EARNINGS-WITHIN-3D FLAGS:
 
 {knowledge_context}
 
-Produce 2 blue-chip pitches per the schema. Cite knowledge sources by source_id.
+Produce 2 blue-chip pitches — one as `pitch_1`, one as `pitch_2`. Cite knowledge sources by source_id.
 """
 
 
@@ -343,29 +348,14 @@ def generate(
         excluded_tickers=excluded,
     )
     result = llm_client.generate(_SYSTEM_PROMPT, user_prompt, _PITCH_SCHEMA)
-    raw = result.parsed.get("pitches", [])
     total_tin = result.tokens_in
     total_tout = result.tokens_out
-    if len(raw) < 2:
-        # gpt-oss-20b (Groq free tier, forced by 8K TPM org cap) is loose on
-        # JSON schema minItems enforcement — sometimes returns 1 pitch. Retry
-        # ONCE with a bolded reminder rather than fail the whole report.
-        log.warning("LLM returned %d pitches; retrying with explicit count reminder", len(raw))
-        retry_prompt = user_prompt + (
-            "\n\n⚠ CRITICAL: your previous response returned fewer than 2 pitches. "
-            "The `pitches` array MUST contain EXACTLY 2 items — this is non-negotiable. "
-            "Produce 2 pitches now."
-        )
-        result = llm_client.generate(_SYSTEM_PROMPT, retry_prompt, _PITCH_SCHEMA)
-        raw = result.parsed.get("pitches", [])
-        total_tin += result.tokens_in
-        total_tout += result.tokens_out
-    if len(raw) < 2:
-        raise ValueError(f"LLM returned {len(raw)} pitches on retry, expected at least 2")
-    if len(raw) > 2:
-        # Groq JSON mode doesn't strictly enforce maxItems; truncate defensively.
-        log.warning("LLM returned %d pitches, truncating to 2", len(raw))
-        raw = raw[:2]
+    # Named-slot schema (pitch_1 + pitch_2) — strict decoder guarantees both
+    # keys are present. Extract to a list to preserve downstream contract.
+    parsed = result.parsed
+    if "pitch_1" not in parsed or "pitch_2" not in parsed:
+        raise ValueError(f"LLM output missing pitch_1/pitch_2 slots: {list(parsed.keys())}")
+    raw = [parsed["pitch_1"], parsed["pitch_2"]]
 
     pitches: list[Pitch] = []
     for p in raw:

@@ -29,7 +29,7 @@ class DummyProvider(Provider):
         req = set(response_schema.get("required", []))
         parsed: dict[str, Any] = {}
 
-        if "pitches" in req:
+        if {"pitch_1", "pitch_2"} <= req:
             parsed = _dummy_pitches()
         elif {"commodity", "equity", "crypto"} <= req:
             parsed = _dummy_trades()
@@ -54,8 +54,7 @@ def _dummy_pitches() -> dict:
     Client-ready thesis prose — plain English, named catalyst, named risk.
     Key factors are short jargon-free bullets."""
     return {
-        "pitches": [
-            {
+        "pitch_1": {
                 "asset_symbol": "AAPL",
                 "direction": "long",
                 "thesis": (
@@ -86,8 +85,8 @@ def _dummy_pitches() -> dict:
                 ],
                 "horizon_days": 7,
                 "earnings_direction_expectation": "bullish",
-            },
-            {
+        },
+        "pitch_2": {
                 "asset_symbol": "XOM",
                 "direction": "short",
                 "thesis": (
@@ -117,8 +116,7 @@ def _dummy_pitches() -> dict:
                     "knowledge/sectors/energy.md",
                 ],
                 "horizon_days": 10,
-            },
-        ]
+        },
     }
 
 
