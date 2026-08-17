@@ -158,13 +158,15 @@ class GroqProvider(Provider):
                     # thesis-prose variety loss is worth the reliability win.
                     temperature=0.15,
                     # Explicit output budget — SDK default was truncating our
-                    # 2-pitch responses mid-JSON (observed 2026-08-17 22:08Z:
-                    # "max completion tokens reached before generating a valid
-                    # document"). 6000 tokens ≈ ~4500 words = plenty for our
-                    # largest output (2 pitches with prose thesis each, or 3
-                    # trades with reasoning). gpt-oss-20b context is 131k so
-                    # this stays well within limits.
-                    max_completion_tokens=6000,
+                    # responses mid-JSON. CRITICAL: Groq's per-org 8K TPM cap
+                    # counts REQUESTED tokens (prompt + max_completion_tokens
+                    # reserved), NOT consumed tokens. Confirmed 2026-08-17
+                    # 22:17Z: 6000 reserve + ~3200 prompt = 9199 requested →
+                    # 413 rate_limit_exceeded even though output would be much
+                    # smaller. 4000 gives us prompt (~3200) + reserve (4000) =
+                    # 7200 < 8000. Still ~3000 words of output — enough for 2
+                    # full pitches with thesis prose or 3 trades with reasoning.
+                    max_completion_tokens=4000,
                 )
                 text = resp.choices[0].message.content or ""
                 parsed = json.loads(text)
