@@ -84,7 +84,11 @@ class GroqProvider(Provider):
                         {"role": "user", "content": user},
                     ],
                     response_format={"type": "json_object"},
-                    temperature=0.4,
+                    # Lowered 2026-08-18 from 0.4 → 0.15 after gpt-oss-20b (forced
+                    # by Groq's 8K TPM cap) produced json_validate_failed 3x on
+                    # the nested trade schema. Small models benefit from
+                    # deterministic decoding when structured output is required.
+                    temperature=0.15,
                 )
                 text = resp.choices[0].message.content or ""
                 parsed = json.loads(text)

@@ -255,8 +255,26 @@ def generate(
         date_ist, market_snapshot, calendar_summary, kb_ctx,
         suggested_commodity=_suggested_commodity(date_ist),
     )
-    result = llm_client.generate(_SYSTEM_PROMPT, user_prompt, _TRADE_SCHEMA)
-    raw = result.parsed
+    try:
+        result = llm_client.generate(_SYSTEM_PROMPT, user_prompt, _TRADE_SCHEMA)
+        raw = result.parsed
+    except Exception as e:
+        # gpt-oss-20b (Groq free tier, forced by 8K TPM org cap) produces
+        # invalid JSON on the nested trade schema periodically (observed
+        # 2026-08-17: json_validate_failed x3). Groq's provider-level retries
+        # use the SAME prompt so they don't help. Python-level retry with an
+        # emphatic JSON-shape reminder gets a fresh attempt with useful hint.
+        log.warning("trade LLM call failed once (%s); retrying with schema reminder", e)
+        retry_prompt = user_prompt + (
+            "\n\n⚠ CRITICAL: your previous response failed JSON validation. Return ONLY "
+            "a single JSON object with EXACTLY three top-level keys: `commodity`, `equity`, "
+            "`crypto`. Each MUST have `asset_symbol`, `direction` ('long'|'short'), `entry`, "
+            "`tp`, `sl` (all numbers), `one_line_reasoning`, `rubric` (object with 5 booleans), "
+            "and `knowledge_sources_used` (array). No markdown, no code fence, no prose — "
+            "just the JSON object."
+        )
+        result = llm_client.generate(_SYSTEM_PROMPT, retry_prompt, _TRADE_SCHEMA)
+        raw = result.parsed
 
     trades: list[Trade] = []
     for klass in ("commodity", "equity", "crypto"):
