@@ -1,12 +1,14 @@
-"""Groq openai/gpt-oss-120b provider — config swap only.
+"""Groq openai/gpt-oss-20b provider — config swap only.
 
-Model swapped 2026-08-18 after Groq deprecated `llama-3.3-70b-versatile`
-(404 model_not_found from 2026-08-17). `openai/gpt-oss-120b` is Groq's current
-featured production model at 120B params + 131k context, still free-tier.
+Model history:
+  • llama-3.3-70b-versatile — deprecated by Groq 2026-08-17 (404).
+  • openai/gpt-oss-120b — tried 2026-08-18; free-tier TPM cap is 8K, pitch
+    prompt requests ~10.8K → 413 every run. Unusable without paid tier.
+  • openai/gpt-oss-20b — free-tier TPM 30K (comfortable headroom over our
+    largest single call ~11K). Smaller model, some prose quality loss vs 70B,
+    but reliably shippable at zero cost — §C9 "everything free" wins.
 
-Free tier: 30 RPM, ~12K TPM. Switch by setting LLM_PROVIDER=groq in .env.
-Weekly reports can exceed 12K TPM in a single call once the knowledge library
-is populated; we handle 429s by sleeping the retry-after window before retry.
+Switch by setting LLM_PROVIDER=groq in .env. 429s are handled via retry-after.
 """
 from __future__ import annotations
 
@@ -20,7 +22,7 @@ from src.llm_providers.base import GenerateResult, Provider
 
 log = logging.getLogger(__name__)
 
-_MODEL_NAME = "openai/gpt-oss-120b"
+_MODEL_NAME = "openai/gpt-oss-20b"
 _MAX_RATE_LIMIT_SLEEP = 90  # cap in seconds — protects the 10-min workflow timeout
 
 
