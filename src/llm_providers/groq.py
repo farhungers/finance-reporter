@@ -1,17 +1,27 @@
-"""Groq openai/gpt-oss-20b provider — config swap only.
+"""Groq openai/gpt-oss-20b provider with STRICT JSON schema mode.
 
 Model history:
   • llama-3.3-70b-versatile — deprecated by Groq 2026-08-17 (404).
-  • openai/gpt-oss-120b — tried 2026-08-18; free-tier TPM cap is 8K, pitch
-    prompt requests ~10.8K → 413 every run. Unusable without paid tier.
-  • openai/gpt-oss-20b — free-tier TPM 30K (comfortable headroom over our
-    largest single call ~11K). Smaller model, some prose quality loss vs 70B,
-    but reliably shippable at zero cost — §C9 "everything free" wins.
+  • openai/gpt-oss-120b — 2026-08-18: 413 rate_limit_exceeded every run (8K TPM
+    org cap on free tier applies per-model; 120b prompt = ~10.8K tokens).
+  • openai/gpt-oss-20b + json_object mode — 2026-08-18: json_validate_failed
+    on nested trade schema (small model can't reliably emit valid JSON at scale).
+  • openai/gpt-oss-20b + STRICT json_schema mode (current) — Groq's constrained
+    decoding guarantees schema compliance mathematically. Root-cause fix for
+    the json_validate_failed loop.
 
-Switch by setting LLM_PROVIDER=groq in .env. 429s are handled via retry-after.
+Design notes:
+  • `_make_strict(schema)` transforms our schemas to satisfy Groq strict-mode
+    rules: additionalProperties=false on every object AND every property listed
+    in `required`. Optional fields become required-but-nullable via string|null.
+  • System prompt no longer inlines the schema (constrained decoder enforces
+    it); saves ~300-500 tokens per call.
+
+Switch by setting LLM_PROVIDER=groq in .env. 429s handled via retry-after.
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import re
@@ -23,6 +33,62 @@ from src.llm_providers.base import GenerateResult, Provider
 log = logging.getLogger(__name__)
 
 _MODEL_NAME = "openai/gpt-oss-20b"
+
+
+def _make_strict(schema: dict[str, Any]) -> dict[str, Any]:
+    """Transform a JSON schema into Groq strict-mode-compatible form.
+
+    Groq strict mode (2026-08 docs) requires:
+      1. `additionalProperties: false` on every object
+      2. Every property key listed in `required`
+      3. Optional fields expressed as nullable via union type
+
+    We deep-copy so the input schema (used by other providers + tests) is not
+    mutated. Recursively descend into properties + items + $defs.
+
+    Fields that our downstream code treats as optional (low_star_warning,
+    earnings_direction_expectation, rough_entry_hint) get made nullable so the
+    model can emit `null` when the criterion doesn't apply — semantically
+    equivalent to omission, and our .get() calls handle both."""
+    s = copy.deepcopy(schema)
+    _strictify(s)
+    return s
+
+
+_NULLABLE_KEYS = {
+    "low_star_warning",
+    "earnings_direction_expectation",
+    "rough_entry_hint",
+}
+
+
+def _strictify(node: Any) -> None:
+    if not isinstance(node, dict):
+        return
+    t = node.get("type")
+    if t == "object":
+        props = node.get("properties") or {}
+        # All properties become required in strict mode
+        node["required"] = list(props.keys())
+        node["additionalProperties"] = False
+        for key, prop in props.items():
+            # Make nullable-optional fields explicitly nullable
+            if key in _NULLABLE_KEYS and isinstance(prop, dict) and "type" in prop:
+                pt = prop["type"]
+                if isinstance(pt, str):
+                    prop["type"] = [pt, "null"]
+            _strictify(prop)
+    elif t == "array":
+        items = node.get("items")
+        if isinstance(items, dict):
+            _strictify(items)
+    # Recurse into any nested dict values (e.g. $defs)
+    for v in node.values():
+        if isinstance(v, dict):
+            _strictify(v)
+        elif isinstance(v, list):
+            for item in v:
+                _strictify(item)
 _MAX_RATE_LIMIT_SLEEP = 90  # cap in seconds — protects the 10-min workflow timeout
 
 
@@ -67,27 +133,29 @@ class GroqProvider(Provider):
         user: str,
         response_schema: dict[str, Any],
     ) -> GenerateResult:
-        # Groq: JSON mode via response_format={"type":"json_object"}.
-        # Schema is passed inline in the system prompt for compliance.
-        schema_hint = json.dumps(response_schema, indent=2)
-        aug_system = (
-            f"{system}\n\nYour response MUST be a JSON object matching this schema:\n"
-            f"```json\n{schema_hint}\n```"
-        )
+        # Strict json_schema mode — Groq's constrained decoder guarantees the
+        # output matches. No need to inline schema in the system prompt.
+        strict_schema = _make_strict(response_schema)
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "response",
+                "strict": True,
+                "schema": strict_schema,
+            },
+        }
         last_error: Exception | None = None
         for attempt in range(3):
             try:
                 resp = self._client.chat.completions.create(
                     model=self._model,
                     messages=[
-                        {"role": "system", "content": aug_system},
+                        {"role": "system", "content": system},
                         {"role": "user", "content": user},
                     ],
-                    response_format={"type": "json_object"},
-                    # Lowered 2026-08-18 from 0.4 → 0.15 after gpt-oss-20b (forced
-                    # by Groq's 8K TPM cap) produced json_validate_failed 3x on
-                    # the nested trade schema. Small models benefit from
-                    # deterministic decoding when structured output is required.
+                    response_format=response_format,
+                    # Low temperature keeps constrained-decoding stable; some
+                    # thesis-prose variety loss is worth the reliability win.
                     temperature=0.15,
                 )
                 text = resp.choices[0].message.content or ""
