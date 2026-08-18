@@ -25,6 +25,14 @@ on:
 permissions:
   contents: write
 
+# Serialize writes to the data-store branch. All workflows that force-push there
+# share this group so no run overwrites another's DB snapshot mid-flight (the
+# race that made silent failures look identical to successful churn). Queue,
+# don't cancel — every push carries a legitimate row nobody else is writing.
+concurrency:
+  group: data-store-push
+  cancel-in-progress: false
+
 jobs:
   run:
     runs-on: ubuntu-latest

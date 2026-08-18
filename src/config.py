@@ -54,6 +54,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "gemini").strip().lower()
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+CEREBRAS_API_KEY = os.environ.get("CEREBRAS_API_KEY", "")
 
 
 KILL_SWITCH_BY_REPORT = {

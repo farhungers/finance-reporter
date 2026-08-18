@@ -11,6 +11,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: data-store-push
+  cancel-in-progress: false
+
 jobs:
   run:
     runs-on: ubuntu-latest

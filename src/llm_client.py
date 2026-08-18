@@ -23,6 +23,10 @@ def _get_provider() -> Provider:
         from src.llm_providers.groq import GroqProvider
 
         return GroqProvider(api_key=config.GROQ_API_KEY)
+    if name == "cerebras":
+        from src.llm_providers.cerebras import CerebrasProvider
+
+        return CerebrasProvider(api_key=config.CEREBRAS_API_KEY)
     if name == "dummy":
         from src.llm_providers.dummy import DummyProvider
 
