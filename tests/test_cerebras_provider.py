@@ -49,7 +49,7 @@ def test_factory_dispatches_to_cerebras(monkeypatch):
     from src import llm_client
     from src.llm_providers.cerebras import CerebrasProvider
 
-    prov = llm_client._get_provider()
+    prov = llm_client._get_provider(llm_client.config.LLM_PROVIDER)
     assert isinstance(prov, CerebrasProvider)
     assert prov.name == "cerebras"
 

@@ -36,13 +36,13 @@ _SCHEMA: dict[str, Any] = {
     "required": ["one_line_summary", "notable_items"],
 }
 
-_SYSTEM = """You are producing a 1-minute pre-open outlook for a Wall Street FA at 16:00 IST (09:00 ET, 30 min before US open).
+_SYSTEM = """You are producing a 1-minute pre-open outlook for a Wall Street FA at 16:00 IST, ~30 min before the US equity cash open.
 
 Rules:
 - one_line_summary: a single sentence characterizing the setup going into the US open — overnight/Asia/Europe session behavior, futures direction, dominant macro theme. Concrete, no jokes. Plain English (a client could hear it).
 - notable_items: 0-5 short bullet strings — overnight gaps, pre-market single-stock moves, EU-session tape, futures anomalies, index-vs-sector divergences visible pre-open. Each ≤15 words. Precise, no filler. If nothing notable, return [].
 
-Style: Bloomberg terminal note. No hype. No exclamation points."""
+Style: Bloomberg terminal note. No hype. No exclamation points. All timestamps in IST."""
 
 
 def _tomorrow_calendar_cards(events: list, tomorrow: str) -> str:
@@ -87,7 +87,7 @@ def generate(now: Optional[datetime] = None) -> tuple[str, dict]:
     headlines = news.fetch_headlines(max_per_feed=3)
     headline_block = "\n".join(f"- [{h.source}] {h.title}" for h in headlines[:12])
 
-    user_prompt = f"""DATE: {date_ist} IST (16:00 IST = 09:00 ET, 30 min before US open)
+    user_prompt = f"""DATE: {date_ist} IST (16:00 IST — pre-open outlook, ~30 min before US equity cash open)
 
 INDEX / MACRO SNAPSHOT:
 {market_snap}

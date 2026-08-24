@@ -56,6 +56,17 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 CEREBRAS_API_KEY = os.environ.get("CEREBRAS_API_KEY", "")
 
+# 2026-08-24 roadmap Phase 4.2: opt-in auto-failover to a fallback provider
+# on retryable failures (413 request-too-large, 429 rate-limited). Auth
+# failures (401) are NEVER auto-failed-over — those must reach the operator
+# so the key gets rotated (per Aug 2026 silent-failure incident). Default
+# fallback is Cerebras when primary is Groq; empty disables failover.
+LLM_AUTO_FAILOVER = _bool("LLM_AUTO_FAILOVER", False)
+LLM_FALLBACK_PROVIDER = os.environ.get("LLM_FALLBACK_PROVIDER", "").strip().lower()
+if LLM_AUTO_FAILOVER and not LLM_FALLBACK_PROVIDER:
+    # Sensible default: cerebras is our built fallback (§Groq-outage 2026-08-18)
+    LLM_FALLBACK_PROVIDER = "cerebras" if LLM_PROVIDER == "groq" else ""
+
 
 KILL_SWITCH_BY_REPORT = {
     "daily_morning": lambda: KILL_SWITCH_DAILY_MORNING,
