@@ -156,6 +156,39 @@ Produce the horizon note per schema."""
     else:
         lines.append("_No 3\\-star events this week\\._")
 
+    # SECTION 2b — US Fed Watch (2026-08-24 roadmap Phase 3.3)
+    # Explicit call-out of US 3-star macro events with 1-line effect explainer.
+    # Sequential dependency: heat map counts events; this block explains them.
+    us_events_week = [
+        e for e in events
+        if week_start <= e.date_ist <= week_end
+        and e.importance >= 3
+        and e.country.upper() in {"USD", "US", "USA"}
+    ]
+    us_events_week.sort(key=lambda e: (e.date_ist, e.time_ist or "99:99"))
+    lines.append(section_banner(None, "🇺🇸", "US FED WATCH", "3-star this week"))
+    if us_events_week:
+        seen_events: set[str] = set()
+        for e in us_events_week[:8]:  # cap for length budget
+            friendly = event_explanations.friendly_name(e.event_name)
+            # De-duplicate multi-line events (e.g. CPI m/m + CPI y/y same morning)
+            dedup_key = friendly.split(" —")[0]
+            if dedup_key in seen_events:
+                continue
+            seen_events.add(dedup_key)
+            t = e.time_ist or "AllDay"
+            head = f">`{esc(e.date_ist[5:])}` `{esc(t)}` *{esc(friendly)}*"
+            defn = event_explanations.what_is(e.event_name)
+            effect = event_explanations.explain(e.event_name)
+            lines.append(head)
+            if defn:
+                lines.append(f">📘 _{esc(defn)}_")
+            if effect:
+                lines.append(f">📈 _{esc(effect)}_")
+            lines.append("")  # break blockquote grouping
+    else:
+        lines.append("_No US 3\\-star events this week\\._")
+
     # SECTION 3 — Macro setup
     lines.append(section_banner(3, "🌐", "MACRO SETUP", None))
     if macro:
