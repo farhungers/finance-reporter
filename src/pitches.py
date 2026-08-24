@@ -38,6 +38,51 @@ def _thesis_mentions_date(thesis: str) -> bool:
     return bool(_MONTH_TOKEN.search(thesis) or _NUMERIC_DATE.search(thesis))
 
 
+# 2026-08-24 roadmap Phase 2.2: when today's US calendar carries a 3-star event,
+# the thesis must reference it (name substring, acronym, or its playbook topic).
+# Keys are the substrings we look for in event names; values are the aliases the
+# LLM might use. Warning-only per §C11 (never omit) but written to logs so
+# operator sees drift, matching the earnings-date enforcement pattern.
+_MACRO_EVENT_ALIASES: dict[str, tuple[str, ...]] = {
+    "cpi": ("cpi", "inflation", "price index", "consumer price"),
+    "core cpi": ("cpi", "core inflation", "sticky inflation"),
+    "pce": ("pce", "personal consumption", "fed's preferred", "inflation target"),
+    "core pce": ("pce", "core inflation", "fed's preferred"),
+    "ppi": ("ppi", "producer price", "input cost"),
+    "nfp": ("nfp", "payroll", "jobs report", "employment", "labor"),
+    "non-farm employment": ("nfp", "payroll", "jobs report", "employment", "labor"),
+    "unemployment": ("unemployment", "jobless", "labor market", "sahm"),
+    "average hourly earnings": ("wages", "ahe", "hourly earnings"),
+    "jolts": ("jolts", "job openings", "labor tightness", "quits"),
+    "fomc": ("fomc", "fed", "powell", "rate decision", "dot plot", "sep"),
+    "federal funds": ("fomc", "fed", "rate decision", "powell"),
+    "chair powell": ("powell", "fed"),
+    "fed chair": ("powell", "fed"),
+    "beige book": ("beige book", "fed"),
+    "retail sales": ("retail sales", "consumer spending", "control group"),
+    "ism manufacturing": ("ism", "manufacturing pmi", "factory"),
+    "ism services": ("ism services", "services pmi"),
+    "10-y bond auction": ("10-year auction", "treasury auction", "bond auction", "duration"),
+    "30-y bond auction": ("30-year auction", "treasury auction", "long bond"),
+    "3-y note auction": ("3-year auction", "treasury auction"),
+    "jackson hole": ("jackson hole", "powell keynote"),
+}
+
+
+def _thesis_mentions_macro(thesis: str, event_names: list[str]) -> bool:
+    """True if thesis references any of today's US 3-star events by name or alias."""
+    if not event_names:
+        return True  # no macro event to reference → vacuously satisfied
+    t = thesis.lower()
+    for evt in event_names:
+        el = evt.lower()
+        for key, aliases in _MACRO_EVENT_ALIASES.items():
+            if key in el:
+                if any(a in t for a in aliases):
+                    return True
+    return False
+
+
 @dataclass
 class Pitch:
     asset_symbol: str
@@ -259,6 +304,7 @@ def _build_user_prompt(
     knowledge_context: str,
     earnings_flags: dict[str, dict[str, Any]],
     excluded_tickers: Optional[set[str]] = None,
+    todays_us_3star_events: Optional[list[str]] = None,
 ) -> str:
     excl = excluded_tickers or set()
     filtered = [t for t in BLUE_CHIP_UNIVERSE if t not in excl]
@@ -280,6 +326,22 @@ def _build_user_prompt(
         )
     earnings_block = "\n".join(earnings_lines) if earnings_lines else "(no pitched-universe earnings within 3 trading days flagged this morning)"
 
+    # 2026-08-24 roadmap Phase 2.2: elevate US 3-star events to a dedicated
+    # section so the LLM can't miss them. If any exist, thesis MUST reference
+    # them (checked post-hoc, warning-only per §C11). Matches the earnings
+    # enforcement pattern.
+    us_events = todays_us_3star_events or []
+    if us_events:
+        macro_block = (
+            "US 3-STAR MACRO EVENTS TODAY (MUST reference in at least one thesis):\n"
+            + "\n".join(f"- {n}" for n in us_events)
+            + "\nUse the matching playbook loaded in the KNOWLEDGE LIBRARY block "
+              "above to frame the thesis mechanism (post-CPI drift, dot-plot "
+              "reaction, etc.) — do NOT quote verbatim."
+        )
+    else:
+        macro_block = "US 3-STAR MACRO EVENTS TODAY: (none scheduled)"
+
     # news_summary intentionally dropped from prompt 2026-08-18 — Groq's 8K TPM
     # org cap made every daily_morning fail; news pulse was ~500 tokens with the
     # least direct signal for pitch quality (calendar + earnings drive the
@@ -292,6 +354,8 @@ BLUE_CHIP_UNIVERSE (choose exactly 2, distinct):
 
 TODAY'S CALENDAR (IST):
 {calendar_summary}
+
+{macro_block}
 
 MARKET SNAPSHOT:
 {market_snapshot}
@@ -311,8 +375,16 @@ def generate(
     market_snapshot: str,
     news_summary: str,
     report_type: str = "daily_morning",
+    todays_us_3star_events: list[str] | None = None,
 ) -> tuple[list[Pitch], dict[str, int]]:
-    """Return (pitches, token_counts). Persists each pitch to DB BEFORE any send."""
+    """Return (pitches, token_counts). Persists each pitch to DB BEFORE any send.
+
+    todays_us_3star_events: names of US 3-star calendar events for the report
+    date. When present, (a) the matching macro playbook is loaded into the LLM
+    context via knowledge.load_for_report, and (b) each pitch thesis is checked
+    post-hoc for a reference to the event (warning only, per §C11).
+    """
+    todays_us_3star_events = todays_us_3star_events or []
     # Rotating ticker-facts sample: pass a day-seeded slice of the universe so
     # different tickers receive deep-context exposure over the week. Groq TPM cap
     # (12K/min) forces this trim; without it, 25+ populated ticker files blow the
@@ -323,7 +395,10 @@ def generate(
     # over ~25 days at size=1. See knowledge.load_for_report() header for the
     # broader budget analysis.
     ticker_sample = _rotating_ticker_sample(date_ist, size=1)
-    kb = knowledge.load_for_report(report_type, tickers=ticker_sample)
+    kb = knowledge.load_for_report(
+        report_type, tickers=ticker_sample,
+        todays_event_names=todays_us_3star_events,
+    )
     kb_ctx = knowledge.build_context_block(kb)
 
     # Pre-compute EARNINGS_WITHIN_3D flags for the ticker sample so the LLM sees
@@ -348,6 +423,7 @@ def generate(
     user_prompt = _build_user_prompt(
         date_ist, calendar_summary, market_snapshot, news_summary, kb_ctx, earnings_flags,
         excluded_tickers=excluded,
+        todays_us_3star_events=todays_us_3star_events,
     )
     result = llm_client.generate(_SYSTEM_PROMPT, user_prompt, _PITCH_SCHEMA)
     total_tin = result.tokens_in
@@ -387,6 +463,13 @@ def generate(
             log.warning(
                 "pitch %s flagged EARNINGS_WITHIN_3D but thesis has no date token — spec drift",
                 sym,
+            )
+        # 2026-08-24 roadmap Phase 2.2: when a US 3-star macro event lands
+        # today, thesis must acknowledge it. Warning-only per §C11.
+        if todays_us_3star_events and not _thesis_mentions_macro(thesis_text, todays_us_3star_events):
+            log.warning(
+                "pitch %s did not reference today's US 3-star event(s) %s — spec drift",
+                sym, todays_us_3star_events,
             )
         # §D.7: LLM MUST NOT paste knowledge text verbatim — transform and apply.
         # Detect 8-token contiguous copies from any loaded chunk. Warn only per

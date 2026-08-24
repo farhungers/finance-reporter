@@ -93,7 +93,11 @@ def _is_stub(chunk: KnowledgeChunk) -> bool:
     return stub_lines / len(content_lines) > 0.6
 
 
-def load_for_report(report_type: str, tickers: list[str] | None = None) -> dict[str, str]:
+def load_for_report(
+    report_type: str,
+    tickers: list[str] | None = None,
+    todays_event_names: list[str] | None = None,
+) -> dict[str, str]:
     """Return {source_id: chunk_body_markdown} for the given report + tickers.
 
     Groq free-tier org cap is 8K TPM (not per-model — confirmed 2026-08-18 after
@@ -103,15 +107,25 @@ def load_for_report(report_type: str, tickers: list[str] | None = None) -> dict[
     headroom. Full whole-tree scan is preserved for weekly reports where a single
     slower call is worth the fuller context.
 
+    2026-08-24 (roadmap Phase 2.1): daily_morning also gets ONE macro playbook
+    loaded when today's calendar carries a US 3-star event matching a
+    knowledge/macro/*.md file. Loading one playbook (~1-2K tokens) instead of
+    all keeps us inside the 8K TPM budget after the ticker-sample trim, and
+    gives the LLM the specific "what post-CPI trades look like" context the
+    daily report used to lack. See event_explanations.EVENT_TO_PLAYBOOK.
+
     Selection rules:
       daily_morning / daily_wrap:
         - Every knowledge/blue_chip/{TICKER}_facts.md for tickers in `tickers`
         - Plus knowledge/house_view/active_themes.md (always)
         - Plus knowledge/house_view/client_language.md (daily_morning only)
+        - Plus ONE matching knowledge/macro/*.md if todays_event_names carries
+          a US 3-star event (daily_morning only)
       weekly_lookback / weekly_prep:
         - Above PLUS whole-tree scan for applies_to_reports match
     """
     tickers = tickers or []
+    todays_event_names = todays_event_names or []
     out: dict[str, str] = {}
 
     if not config.KNOWLEDGE_DIR.exists():
@@ -155,6 +169,27 @@ def load_for_report(report_type: str, tickers: list[str] | None = None) -> dict[
             c = _read_chunk(p)
             if c and c.body and not _is_stub(c):
                 out[c.source_id] = c.body
+
+    # Load ONE matching US-macro playbook for daily_morning when today's calendar
+    # has a corresponding event. Cap at one file to stay under 8K TPM. If two
+    # matching events occur the same day (e.g. FOMC + Powell speech), the earlier-
+    # match (longer key) wins via matching_playbook()'s sort order.
+    if report_type == "daily_morning" and todays_event_names:
+        # Local import — event_explanations depends on nothing else in this module
+        # so cycle-free, but keeping it local keeps this file's import graph clean.
+        from src.event_explanations import matching_playbook
+        loaded_playbook: str | None = None
+        for evt_name in todays_event_names:
+            pb = matching_playbook(evt_name)
+            if pb:
+                loaded_playbook = pb
+                break
+        if loaded_playbook:
+            p = config.KNOWLEDGE_DIR / "macro" / loaded_playbook
+            if p.exists():
+                c = _read_chunk(p)
+                if c and c.body and not _is_stub(c):
+                    out[c.source_id] = c.body
 
     return out
 
