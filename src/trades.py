@@ -84,6 +84,16 @@ CLASS INTEGRITY (STRICT):
 - Crypto slot: symbol MUST be a recognized major crypto (BTC, ETH, SOL, BNB, XRP, ADA, DOGE, AVAX, LINK, DOT, LTC, MATIC, ATOM, NEAR, APT, etc.). Not an equity or ETF.
 - Equity slot: symbol MUST be a US-listed stock ticker (NOT a commodity name and NOT a crypto).
 
+DIRECTION — SHORTS ARE PERMITTED AND EXPECTED:
+- Data through 2026-08-31: 63/72 trades (87%) shipped LONG. That is a bias,
+  not a read. When today's tape is red, real rates are rising, DXY is
+  bidding, VIX is expanding, or the setup is a distribution/topping
+  pattern — SHORT is the correct direction.
+- Do not force shorts when the setup is bullish. Direction is a judgment
+  informed by regime + technical structure, not a default.
+- The weekly look-back surfaces 7-day direction skew — persistent long-only
+  patterns will be flagged.
+
 STRICT RULES:
 - Provide precise numeric entry, TP, SL for each trade.
 - SL must sit at a real technical level (prior swing, ATR band, structural break), not arbitrary.

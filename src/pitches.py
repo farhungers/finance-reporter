@@ -174,6 +174,18 @@ STRICT RULES:
 - Pick exactly 2 distinct tickers from the provided BLUE_CHIP_UNIVERSE. Never pick outside it.
 - Directions may repeat but assets must not.
 
+DIRECTION — SHORTS ARE PERMITTED AND EXPECTED:
+- Data through 2026-08-31: 48/48 pitches shipped LONG, 0 shorts. That is a
+  strategist bias, not a real read of the tape. A blue-chip name near a
+  distribution top, with a bearish catalyst (guide-down, tariff exposure,
+  cyclical peak, negative regulatory event), is a valid SHORT pitch.
+- When the day's regime read is bearish OR your chosen setup is a
+  distribution/topping pattern with a nameable bearish catalyst, USE `short`.
+- Do not force shorts when the setup is bullish. But do not force longs when
+  the setup is bearish either. Direction is a judgment, not a default.
+- The weekly look-back now surfaces 7-day direction skew — persistent
+  long-only patterns will be flagged.
+
 THESIS STYLE — this is the most important rule. Write the thesis as a "ready-to-repeat" pitch: prose the FA can literally read aloud to a client. This means:
   • 3-5 sentences, plain English, no jargon
   • Prefer "Apple reports earnings July 30" over "AAPL prints EPS 7/30"

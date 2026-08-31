@@ -226,11 +226,40 @@ def _observations(week_start: str, week_end: str, s: accuracy.Stats, bootstrap: 
             (week_start, week_end),
         ).fetchall()
 
-    # 1. Direction bias
+    # 1. Direction bias — pitches (2026-08-31: tightened to ≥80% skew, not
+    # only 100%. Prior 100%-only trigger missed the 48/48-long systemic bias
+    # detected in the retro because each week individually could have >0
+    # dissenting shorts even when the monthly total was zero.)
     dirs = Counter(r["direction"] for r in pitches_rows)
-    if dirs and (dirs.get("long", 0) == 0 or dirs.get("short", 0) == 0) and sum(dirs.values()) >= 3:
-        dom = "long" if dirs.get("long", 0) > 0 else "short"
-        out.append(("Direction bias", f"all {sum(dirs.values())} pitches this week were {dom}-only — worth watching if this reflects tape conviction or a blind spot"))
+    total_p = sum(dirs.values())
+    if total_p >= 3:
+        long_n = dirs.get("long", 0)
+        short_n = dirs.get("short", 0)
+        long_pct = long_n / total_p
+        if long_pct >= 0.8:
+            out.append((
+                "Direction skew (pitches)",
+                f"{long_n}/{total_p} pitches long ({long_pct:.0%}) — flag if this reflects a blind spot rather than tape conviction",
+            ))
+        elif long_pct <= 0.2:
+            out.append((
+                "Direction skew (pitches)",
+                f"{short_n}/{total_p} pitches short ({1 - long_pct:.0%}) — unusual; verify the bearish read is genuine",
+            ))
+
+    # 1b. Direction bias — trades. Data through 2026-08-31 showed 63/72
+    # trades (87%) long; without this line the bias never surfaces on the
+    # trade side. Same ≥80% threshold as pitches.
+    tdirs = Counter(r["direction"] for r in trades_rows)
+    total_t = sum(tdirs.values())
+    if total_t >= 3:
+        long_n = tdirs.get("long", 0)
+        long_pct = long_n / total_t
+        if long_pct >= 0.8:
+            out.append((
+                "Direction skew (trades)",
+                f"{long_n}/{total_t} trades long ({long_pct:.0%}) — persistent long-only pattern flagged",
+            ))
 
     # 2. Ticker concentration
     tickers = Counter(r["asset_symbol"] for r in pitches_rows)
