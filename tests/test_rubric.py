@@ -85,8 +85,12 @@ def test_macro_alignment_short_downgraded_when_price_above_ma():
 
 
 def test_macro_alignment_unchanged_when_trend_unknown():
+    """No trend data + macro keyword present → LLM boolean preserved."""
     b = _all_true()
-    r = score(b, direction="long", spot=None, ma20=None, reasoning_text="Q3 2024 rebound analog")
+    r = score(
+        b, direction="long", spot=None, ma20=None,
+        reasoning_text="Q3 2024 Fed rate-cut rebound analog",
+    )
     assert r.breakdown["macro_alignment"] == 1
 
 
@@ -96,21 +100,31 @@ def test_base_rate_downgraded_without_dated_analog():
     assert r.breakdown["base_rate_support"] == 0
 
 
-def test_base_rate_kept_when_year_cited():
+def test_base_rate_kept_when_year_cited_with_outcome():
+    """v1.2: analog year alone isn't enough — needs outcome verb nearby."""
     b = _all_true()
-    r = score(b, direction="long", spot=105.0, ma20=100.0, reasoning_text="mirrors the 2019 pattern")
+    r = score(
+        b, direction="long", spot=105.0, ma20=100.0,
+        reasoning_text="Fed cuts — mirrors the 2019 rally pattern",
+    )
     assert r.breakdown["base_rate_support"] == 1
 
 
 def test_base_rate_kept_on_post_event_phrase():
     b = _all_true()
-    r = score(b, direction="long", spot=105.0, ma20=100.0, reasoning_text="post-CPI drift setup")
+    r = score(
+        b, direction="long", spot=105.0, ma20=100.0,
+        reasoning_text="Fed cuts — post-CPI drift setup",
+    )
     assert r.breakdown["base_rate_support"] == 1
 
 
-def test_base_rate_kept_on_quarter_reference():
+def test_base_rate_kept_on_quarter_reference_with_outcome():
     b = _all_true()
-    r = score(b, direction="long", spot=105.0, ma20=100.0, reasoning_text="analog to Q4 2022")
+    r = score(
+        b, direction="long", spot=105.0, ma20=100.0,
+        reasoning_text="Fed cuts — analog to Q4 2022 rally in duration",
+    )
     assert r.breakdown["base_rate_support"] == 1
 
 
@@ -226,8 +240,73 @@ def test_risk_reward_invalid_prices_leaves_llm_boolean():
     b = _all_true()
     r = score(
         b, direction="long", spot=100.0, ma20=100.0,
-        reasoning_text="2024 analog, entry at 100.5",
+        reasoning_text="Fed 2024 rally analog, entry at 100.5",
         entry=100.0, tp=105.0, sl=101.0, atr=2.0,  # long but sl > entry
     )
     # LLM said TRUE, invalid prices → preserved
     assert r.breakdown["risk_reward"] == 1
+
+
+# --- Rubric v1.2 P2 audits (macro keyword + base-rate outcome-verb) ------
+
+def test_macro_alignment_downgraded_when_no_macro_keyword():
+    """Trend agrees but reasoning names no macro theme → downgrade."""
+    b = _all_true()
+    r = score(
+        b, direction="long", spot=105.0, ma20=100.0,
+        reasoning_text="chart looks fine and 2024 rally pattern held",
+    )
+    assert r.breakdown["macro_alignment"] == 0
+
+
+def test_macro_alignment_kept_with_keyword():
+    b = _all_true()
+    r = score(
+        b, direction="long", spot=105.0, ma20=100.0,
+        reasoning_text="riding Fed rate-cut path and 2024 rally analog",
+    )
+    assert r.breakdown["macro_alignment"] == 1
+
+
+def test_macro_alignment_various_keywords_accepted():
+    for kw in ("DXY soft", "yields falling", "hawkish tone", "risk-on regime", "dovish PCE"):
+        b = _all_true()
+        r = score(
+            b, direction="long", spot=105.0, ma20=100.0,
+            reasoning_text=f"{kw}, 2024 rally analog",
+        )
+        assert r.breakdown["macro_alignment"] == 1, f"expected keyword accepted: {kw!r}"
+
+
+def test_base_rate_downgraded_when_analog_alone_without_verb():
+    """v1.2 tightening: 'recall 2022' or 'mirrors 2019 pattern' without an outcome
+    verb near the anchor no longer earns the point."""
+    b = _all_true()
+    r = score(
+        b, direction="long", spot=105.0, ma20=100.0,
+        reasoning_text="Fed cuts — recall 2022 setup",  # no outcome verb near "2022"
+    )
+    assert r.breakdown["base_rate_support"] == 0
+
+
+def test_base_rate_kept_with_outcome_verb_before_anchor():
+    """Verb before anchor also counts (60-char window either side)."""
+    b = _all_true()
+    r = score(
+        b, direction="long", spot=105.0, ma20=100.0,
+        reasoning_text="Fed cuts — gold rallied hard in 2019 on the same setup",
+    )
+    assert r.breakdown["base_rate_support"] == 1
+
+
+def test_base_rate_downgraded_when_verb_too_far_from_anchor():
+    """>60 chars between anchor and outcome verb → not proof of citation."""
+    b = _all_true()
+    long_text = (
+        "Fed cuts — 2019 seen as reference. " + ("filler text " * 15) + "gold rallied"
+    )
+    r = score(
+        b, direction="long", spot=105.0, ma20=100.0,
+        reasoning_text=long_text,
+    )
+    assert r.breakdown["base_rate_support"] == 0

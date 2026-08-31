@@ -46,6 +46,48 @@ _ANALOG_ANCHOR = re.compile(
     re.IGNORECASE,
 )
 
+# v1.2 base_rate audit refinement: an analog date alone doesn't prove the
+# LLM is actually citing what happened. Require an outcome verb within a
+# ~60-char window of the anchor — "in 2022 gold rallied post-CPI" passes,
+# "recall 2022" doesn't. Prior data (n=55 resolved) showed base_rate_support
+# ON → −0.57R (2/27 TP = 7%); regex-only audit let boilerplate slip through.
+_OUTCOME_VERBS = re.compile(
+    r"\b(?:drift(?:ed|s|ing)?|rall(?:y|ies|ied|ying)|sell(?:s|-?off)|sold\s+off|"
+    r"surge(?:d|s|ing)?|plunge(?:d|s|ing)?|reverse(?:d|s|ing)?|"
+    r"held?|bounc(?:e|ed|es|ing)|broke(?:\s+out)?|breakout|breakdown|"
+    r"work(?:ed|s|ing)|play(?:ed|s|ing)(?:\s+out)?|hit|miss(?:ed|es)?|"
+    r"fail(?:ed|s)?|top(?:ped)?|bottom(?:ed)?|squeez(?:e|ed|ing))\b",
+    re.IGNORECASE,
+)
+_BASE_RATE_WINDOW = 60  # chars either side of the anchor
+
+
+def _base_rate_supported(text: str) -> bool:
+    """True iff text contains a dated analog paired with an outcome verb
+    within ~60 chars — evidence that the analog is actually being cited for
+    what happened, not just name-dropped."""
+    if not text:
+        return False
+    for m in _ANALOG_ANCHOR.finditer(text):
+        start = max(0, m.start() - _BASE_RATE_WINDOW)
+        end = min(len(text), m.end() + _BASE_RATE_WINDOW)
+        if _OUTCOME_VERBS.search(text[start:end]):
+            return True
+    return False
+
+# v1.2 macro_alignment refinement: trend-agreement is necessary but not
+# sufficient — in any broad uptrend, all longs trivially agree with the 20d
+# MA. Also require the reasoning to name the macro read (rates/DXY/VIX/Fed/
+# inflation/regime) so the audit rewards a stated thesis, not tape-riding.
+_MACRO_KEYWORDS = re.compile(
+    r"\b(?:dxy|dollar|rates?|yields?|10-?y(?:ear|r)?|2-?y(?:ear|r)?|"
+    r"vix|volatility|fed|fomc|powell|hawkish|dovish|"
+    r"inflation|cpi|pce|nfp|payroll|earnings\s+season|guidance|"
+    r"geopolit|opec|risk-?(?:on|off)|regime|rotation|breadth|"
+    r"real\s+yield|term\s+premium|curve|steepen|flatten)\b",
+    re.IGNORECASE,
+)
+
 # v1.2 audit for technical_setup: reasoning must name a numeric price level
 # within 1×ATR of the (grounded) entry. Extracts ints and decimals; skips
 # 4-digit integers 1900-2099 that are almost always analog years, not price
@@ -161,15 +203,22 @@ def score(
             raise ValueError(f"rubric missing factor: {f!r} (got keys {list(booleans)})")
         breakdown[f] = 1 if bool(booleans[f]) else 0
 
-    # Audit: macro_alignment must agree with 20d trend when we can measure it.
-    if breakdown["macro_alignment"] == 1 and direction is not None:
-        agrees = _trend_agrees(direction, spot, ma20)
-        if agrees is False:
-            breakdown["macro_alignment"] = 0
+    # Audit: macro_alignment must (a) agree with 20d trend and (b) actually
+    # name the macro read. Trend-agreement alone was trivially satisfied by
+    # every long in a broad uptrend — see v1.2 refinement note above.
+    if breakdown["macro_alignment"] == 1:
+        if direction is not None:
+            agrees = _trend_agrees(direction, spot, ma20)
+            if agrees is False:
+                breakdown["macro_alignment"] = 0
+        if breakdown["macro_alignment"] == 1 and reasoning_text:
+            if not _MACRO_KEYWORDS.search(reasoning_text):
+                breakdown["macro_alignment"] = 0
 
-    # Audit: base_rate_support requires a nameable dated analog in the text.
+    # Audit: base_rate_support requires a dated analog paired with an outcome
+    # verb — the LLM must be citing what happened, not just name-dropping a year.
     if breakdown["base_rate_support"] == 1 and reasoning_text:
-        if not _ANALOG_ANCHOR.search(reasoning_text):
+        if not _base_rate_supported(reasoning_text):
             breakdown["base_rate_support"] = 0
 
     # v1.2 audit: technical_setup requires a cited level near entry.
