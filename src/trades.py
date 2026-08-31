@@ -11,7 +11,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, date
 from typing import Any, Optional
 
-from src import db, knowledge, llm_client, market_data, rubric
+from src import db, knowledge, llm_client, market_data, novelty, rubric
+
+_NOVELTY_THRESHOLD = 0.6  # See src/novelty.py + pitches._NOVELTY_THRESHOLD
 
 log = logging.getLogger(__name__)
 
@@ -216,7 +218,17 @@ def _build_user_prompt(
     calendar_summary: str,
     knowledge_context: str,
     suggested_commodity: str,
+    recent_reasoning_snippets: Optional[list[str]] = None,
 ) -> str:
+    if recent_reasoning_snippets:
+        novelty_block = (
+            "RECENT TRADE REASONING (do NOT restate the same mechanism verbatim; "
+            "vary phrasing and cite fresh evidence):\n"
+            + "\n".join(f"- {s}" for s in recent_reasoning_snippets)
+        )
+    else:
+        novelty_block = "RECENT TRADE REASONING: (none in the last 3 days)"
+
     return f"""DATE: {date_ist} IST
 
 MARKET SNAPSHOT (spot prices + day change):
@@ -226,6 +238,8 @@ TODAY'S CALENDAR (IST):
 {calendar_summary}
 
 {knowledge_context}
+
+{novelty_block}
 
 COMMODITY ROTATION ANCHOR: {suggested_commodity}
 (Default to this commodity today unless a materially stronger setup exists in
@@ -310,9 +324,12 @@ def generate(
     kb = knowledge.load_for_report(report_type, tickers=[])
     kb_ctx = knowledge.build_context_block(kb)
 
+    recent_baselines = novelty.recent_trade_reasoning(days=3)
+    recent_snips = novelty.snippets(recent_baselines, max_words=15, cap=3)
     user_prompt = _build_user_prompt(
         date_ist, market_snapshot, calendar_summary, kb_ctx,
         suggested_commodity=_suggested_commodity(date_ist),
+        recent_reasoning_snippets=recent_snips,
     )
     try:
         result = llm_client.generate(_SYSTEM_PROMPT, user_prompt, _TRADE_SCHEMA)
@@ -408,6 +425,16 @@ def generate(
                 log.warning(
                     "trade %s reasoning contains verbatim chunk from %s: %r",
                     sym, sid, phrase,
+                )
+        # 2026-08-31: novelty check — flag near-duplicate reasoning across
+        # the last 3 days ("breakout retest of 200-day MA, riding AI capex
+        # ROI proof-cycle" appeared 6+ times across different tickers).
+        if recent_baselines:
+            sim, match = novelty.most_similar(reasoning, recent_baselines)
+            if sim >= _NOVELTY_THRESHOLD:
+                log.warning(
+                    "trade %s reasoning near-duplicate of recent (Jaccard=%.2f): %r ~ %r",
+                    sym, sim, reasoning[:80], match[:80],
                 )
         trades.append(
             Trade(

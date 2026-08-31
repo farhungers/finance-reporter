@@ -16,9 +16,14 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Optional
 
-from src import config, db, knowledge, llm_client, market_data, rubric
+from src import config, db, knowledge, llm_client, market_data, novelty, rubric
 from src.earnings import check_earnings
 from src.market_data import BLUE_CHIP_UNIVERSE
+
+# 2026-08-31 novelty threshold. Jaccard on ≥3-char token bags minus common
+# finance stopwords; ≥0.6 means the setup mechanism is a near-duplicate of a
+# recent pitch. Warning-only per §C11 — operator sees the drift in logs.
+_NOVELTY_THRESHOLD = 0.6
 
 log = logging.getLogger(__name__)
 
@@ -326,6 +331,7 @@ def _build_user_prompt(
     earnings_flags: dict[str, dict[str, Any]],
     excluded_tickers: Optional[set[str]] = None,
     todays_us_3star_events: Optional[list[str]] = None,
+    recent_reasoning_snippets: Optional[list[str]] = None,
 ) -> str:
     excl = excluded_tickers or set()
     filtered = [t for t in BLUE_CHIP_UNIVERSE if t not in excl]
@@ -372,6 +378,20 @@ def _build_user_prompt(
     # least direct signal for pitch quality (calendar + earnings drive the
     # catalyst, market_snapshot drives the setup). If we get provider headroom
     # back later, restore it.
+
+    # 2026-08-31 novelty context: show the LLM its recent theses (trimmed) so
+    # it can't unconsciously restate the same mechanism verbatim. Kept short
+    # (3 × 15 words) to respect the 8K TPM budget.
+    if recent_reasoning_snippets:
+        novelty_block = (
+            "RECENT PITCH THESES (do NOT restate the same mechanism verbatim; "
+            "if the setup is genuinely the same, at minimum vary phrasing and "
+            "cite fresh evidence):\n"
+            + "\n".join(f"- {s}" for s in recent_reasoning_snippets)
+        )
+    else:
+        novelty_block = "RECENT PITCH THESES: (none in the last 3 days)"
+
     return f"""DATE: {date_ist} IST
 
 BLUE_CHIP_UNIVERSE (choose exactly 2, distinct):
@@ -387,6 +407,8 @@ MARKET SNAPSHOT:
 
 EARNINGS-WITHIN-3D FLAGS:
 {earnings_block}
+
+{novelty_block}
 
 {knowledge_context}
 
@@ -445,10 +467,15 @@ def generate(
             }
 
     excluded = _recent_pitch_tickers()
+    # 2026-08-31 novelty context: last-3-days thesis snippets shown to LLM to
+    # break the copy-paste template pattern. Pulled once per generation.
+    recent_baselines = novelty.recent_pitch_theses(days=3)
+    recent_snips = novelty.snippets(recent_baselines, max_words=15, cap=3)
     user_prompt = _build_user_prompt(
         date_ist, calendar_summary, market_snapshot, news_summary, kb_ctx, earnings_flags,
         excluded_tickers=excluded,
         todays_us_3star_events=todays_us_3star_events,
+        recent_reasoning_snippets=recent_snips,
     )
     result = llm_client.generate(_SYSTEM_PROMPT, user_prompt, _PITCH_SCHEMA)
     total_tin = result.tokens_in
@@ -519,6 +546,15 @@ def generate(
                 log.warning(
                     "pitch %s thesis contains verbatim chunk from %s: %r",
                     sym, sid, phrase,
+                )
+        # 2026-08-31: novelty check — if this thesis is a near-duplicate of a
+        # recent one, log LOUD. Warning-only per §C11.
+        if recent_baselines:
+            sim, match = novelty.most_similar(thesis_text, recent_baselines)
+            if sim >= _NOVELTY_THRESHOLD:
+                log.warning(
+                    "pitch %s thesis near-duplicate of recent (Jaccard=%.2f): %r ~ %r",
+                    sym, sim, thesis_text[:80], match[:80],
                 )
         pitches.append(
             Pitch(
