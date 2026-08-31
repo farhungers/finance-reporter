@@ -79,6 +79,11 @@ _SYSTEM_PROMPT = """You are a disciplined trader producing 3 daily trade ideas f
 
 MANDATORY: exactly 3 trades — 1 commodity, 1 US-listed equity (NOT restricted to blue chips), 1 major crypto (BTC/ETH/SOL/etc.).
 
+CLASS INTEGRITY (STRICT):
+- Commodity slot: symbol MUST be one of GOLD, SILVER, OIL_WTI, OIL_BRENT, COPPER, NAT_GAS. Do NOT put an equity ticker (e.g. COP for ConocoPhillips) into the commodity slot even if the reasoning is about the underlying commodity — use the commodity symbol directly.
+- Crypto slot: symbol MUST be a recognized major crypto (BTC, ETH, SOL, BNB, XRP, ADA, DOGE, AVAX, LINK, DOT, LTC, MATIC, ATOM, NEAR, APT, etc.). Not an equity or ETF.
+- Equity slot: symbol MUST be a US-listed stock ticker (NOT a commodity name and NOT a crypto).
+
 STRICT RULES:
 - Provide precise numeric entry, TP, SL for each trade.
 - SL must sit at a real technical level (prior swing, ATR band, structural break), not arbitrary.
@@ -149,6 +154,50 @@ def _suggested_commodity(date_ist: str) -> str:
     except Exception:
         return "GOLD"
     return _COMMODITY_DOW.get(d.weekday(), "GOLD")
+
+
+# 2026-08-31 calibration: LLM placed COP (ConocoPhillips equity) into the
+# commodity slot with reasoning "Copper breakout retest at 3.55" — symbol vs
+# commodity name confusion. Class-integrity validator catches this before
+# grounding runs on the wrong asset (equity-priced ATR against a commodity
+# threshold produces nonsense R:R and lets the trade ship anyway).
+#
+# Crypto allowlist expands market_data.CRYPTO_YF_SUFFIX with a few majors the
+# LLM might pick that don't yet have suffix entries — keeps false positives low.
+_CRYPTO_ALLOWLIST: frozenset[str] = frozenset(market_data.CRYPTO_YF_SUFFIX.keys()) | frozenset({
+    "USDT", "USDC", "DOT", "LTC", "TRX", "BCH", "UNI", "ATOM", "NEAR", "APT",
+})
+
+
+def _validate_slot_class(slot_name: str, symbol: str) -> Optional[str]:
+    """Return an error message if the symbol doesn't fit its slot; None if OK."""
+    sym = symbol.upper()
+    is_commodity = sym in market_data.COMMODITY_SYMBOLS
+    is_crypto = sym in _CRYPTO_ALLOWLIST
+    if slot_name == "commodity":
+        if not is_commodity:
+            allowed = sorted(market_data.COMMODITY_SYMBOLS)
+            return f"symbol {sym!r} not in COMMODITY_SYMBOLS {allowed}"
+    elif slot_name == "crypto":
+        if not is_crypto:
+            return f"symbol {sym!r} not a recognized major crypto ticker"
+    elif slot_name == "equity":
+        if is_commodity or is_crypto:
+            return f"symbol {sym!r} is a commodity/crypto ticker, not an equity"
+    return None
+
+
+def _class_mismatches(raw: dict) -> list[tuple[str, str]]:
+    """Return list of (slot, error) for every slot with wrong-class symbol."""
+    out: list[tuple[str, str]] = []
+    for klass in ("commodity", "equity", "crypto"):
+        if klass not in raw:
+            continue  # missing-slot handled by downstream ValueError
+        sym = raw[klass].get("asset_symbol", "")
+        err = _validate_slot_class(klass, sym)
+        if err:
+            out.append((klass, err))
+    return out
 
 
 def _build_user_prompt(
@@ -276,6 +325,40 @@ def generate(
         result = llm_client.generate(_SYSTEM_PROMPT, retry_prompt, _TRADE_SCHEMA)
         raw = result.parsed
 
+    # 2026-08-31 calibration: class-integrity retry BEFORE grounding runs.
+    # LLM occasionally places wrong-class tickers (COP in commodity slot with
+    # "Copper" reasoning). One corrective retry with named offenders; if it
+    # still fails, log LOUD and ship anyway per §C11 never-omit — grounding
+    # will fail cleanly on the invalid ticker and stars will be honestly low.
+    tokens_in = result.tokens_in
+    tokens_out = result.tokens_out
+    mismatches = _class_mismatches(raw)
+    if mismatches:
+        log.warning(
+            "trade class-integrity mismatch on first attempt (%d slot(s)): %s",
+            len(mismatches), mismatches,
+        )
+        corrective = (
+            "\n\n⚠ CLASS INTEGRITY: your previous response placed the wrong "
+            "asset type in one or more slots:\n"
+            + "\n".join(f"  - {klass}: {err}" for klass, err in mismatches)
+            + f"\n\nCommodity slot MUST use one of: {sorted(market_data.COMMODITY_SYMBOLS)}\n"
+            + f"Crypto slot SHOULD use one of: {sorted(_CRYPTO_ALLOWLIST)}\n"
+            + "Equity slot MUST use a US-listed stock ticker (NOT the commodity "
+            + "or crypto lists above).\nReturn a corrected JSON with proper "
+            + "class assignments — same schema."
+        )
+        retry_result = llm_client.generate(_SYSTEM_PROMPT, user_prompt + corrective, _TRADE_SCHEMA)
+        raw = retry_result.parsed
+        tokens_in += retry_result.tokens_in
+        tokens_out += retry_result.tokens_out
+        still_wrong = _class_mismatches(raw)
+        if still_wrong:
+            log.error(
+                "trade class-integrity STILL wrong after 1 retry: %s — shipping anyway per §C11",
+                still_wrong,
+            )
+
     trades: list[Trade] = []
     for klass in ("commodity", "equity", "crypto"):
         if klass not in raw:
@@ -357,4 +440,4 @@ def generate(
                     (now_utc, report_type, sid, tr.db_id),
                 )
 
-    return trades, {"tokens_in": result.tokens_in, "tokens_out": result.tokens_out}
+    return trades, {"tokens_in": tokens_in, "tokens_out": tokens_out}
