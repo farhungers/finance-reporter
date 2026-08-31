@@ -33,6 +33,14 @@ _MONTH_TOKEN = re.compile(
 )
 _NUMERIC_DATE = re.compile(r"\b\d{1,2}[/-]\d{1,2}\b")
 
+# Earnings-verb context: paired with a month/numeric-date token in the same
+# thesis, this suggests the LLM is citing an earnings date. Used to detect
+# hallucinated forward-earnings references when EARNINGS_WITHIN_3D was NOT set.
+_EARNINGS_VERB_CTX = re.compile(
+    r"\b(earnings?|report(?:s|ed|ing)?|q[1-4]\s+(?:eps|results?))\b",
+    re.IGNORECASE,
+)
+
 
 def _thesis_mentions_date(thesis: str) -> bool:
     return bool(_MONTH_TOKEN.search(thesis) or _NUMERIC_DATE.search(thesis))
@@ -186,6 +194,7 @@ OTHER FIELDS:
 - rough_entry_hint: freeform, natural language ("near $185 support", "on pullback to 50-day average"). Not a precise number.
 - knowledge_sources_used: cite EVERY source_id from the KNOWLEDGE LIBRARY block that shaped this pitch. NEVER paste text verbatim — transform and apply. If a pitch used no knowledge chunks, return [].
 - For each pitch with EARNINGS_WITHIN_3D marked, you MUST include earnings_direction_expectation ('bullish' / 'bearish' / 'unknown') AND mention the earnings date + expected impact in the thesis.
+- NEVER cite an earnings date that isn't in the EARNINGS_WITHIN_3D block above. If your chosen ticker has no flag there, DO NOT reference "earnings" as a catalyst — the next report is more than 3 trading days out or unknown, so treating it as a near-term driver is a hallucination. Use a different catalyst (macro release, sector event) or acknowledge no catalyst and let catalyst_proximity=FALSE.
 - horizon_days: hold window; DEFAULT 5-7 (tactical). Cap 15. Long horizons prevent the resolver from grading pitches in time for the weekly look-back — prior data through 2026-08-13 had 25/26 pitches still_open because horizons were too long.
 - low_star_warning (only when your rubric booleans sum to 0 or 1): 1 line, plain English, non-joking — explain honestly why shipping despite low conviction. Something the FA can say: "no near-term catalyst; treat as watch-list only". Omit or leave empty when stars≥2.
 
@@ -321,8 +330,12 @@ def _build_user_prompt(
         )
     earnings_lines = []
     for t, info in earnings_flags.items():
+        td = info["td"]
+        # Explicit tense marker: post-2026-08-31, td is always ≥0 (future-only
+        # trigger), so this reads "in X trading days" or "today" — never past.
+        when = "today" if td == 0 else f"in {td} trading day(s)"
         earnings_lines.append(
-            f"- {t}: EARNINGS_WITHIN_3D=True, date={info['date']}, trading_days_from_today={info['td']}"
+            f"- {t}: EARNINGS_WITHIN_3D=True, reports {when} on {info['date']}"
         )
     earnings_block = "\n".join(earnings_lines) if earnings_lines else "(no pitched-universe earnings within 3 trading days flagged this morning)"
 
@@ -462,6 +475,19 @@ def generate(
             # (per §C11 never-omit); operator sees the drift in logs.
             log.warning(
                 "pitch %s flagged EARNINGS_WITHIN_3D but thesis has no date token — spec drift",
+                sym,
+            )
+        # 2026-08-31 calibration: LLM was citing already-past earnings ("reports
+        # on July 30" written on Aug 4) as forward catalysts. If the ticker is
+        # NOT in the earnings_flags block, thesis MUST NOT cite an earnings
+        # date — that's a hallucination surface. Warning-only per §C11.
+        if (
+            not within_3d
+            and _thesis_mentions_date(thesis_text)
+            and _EARNINGS_VERB_CTX.search(thesis_text)
+        ):
+            log.warning(
+                "pitch %s NOT flagged EARNINGS_WITHIN_3D but thesis cites an earnings date — likely hallucination",
                 sym,
             )
         # 2026-08-24 roadmap Phase 2.2: when a US 3-star macro event lands

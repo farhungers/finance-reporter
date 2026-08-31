@@ -1,8 +1,16 @@
 """Earnings calendar check for pitched tickers (CLAUDE.md §D.8, §C16, §E.21).
 
-Rule: if a pitched ticker's next earnings is within 3 trading days (either side),
+Rule: if a pitched ticker's NEXT earnings is within 3 trading days AHEAD,
 `earnings_within_3d=1`, `catalyst_proximity` is force-set to 1 (LLM cannot override),
 and the pitch thesis MUST mention the earnings date + expected direction.
+
+Tense discipline (2026-08-31 calibration): §D.8 phrase "either side" was
+originally coded as abs(trading_days) ≤ 3 — meaning past-side earnings (already
+reported) also triggered the flag and the catalyst_proximity override. Data
+review showed LLM pitches citing already-reported earnings as forward catalysts
+("reports earnings on July 30" written on 2026-08-04), which is worthless
+information post-report. Reinterpreting §D.8: "next earnings" implies future;
+now 0 ≤ trading_days ≤ 3 only. Same-day earnings (0 days) still trigger.
 
 Primary: yfinance. Fallback: Nasdaq calendar RSS. On both-fail: return None (no
 auto-trigger; downstream treats NULL as unknown per §D.8 fallback rule).
@@ -58,12 +66,14 @@ def check_earnings(ticker: str, today: Optional[date] = None) -> Optional[Earnin
         return None
     days = (next_dt - today).days
     trading = _trading_days_between(today, next_dt)
+    # Future-only trigger: past earnings are noise post-report (see module docstring).
+    within_flag = 0 <= trading <= 3
     return EarningsInfo(
         ticker=ticker,
         next_earnings_date=next_dt,
         days_until=days,
         trading_days_until=trading,
-        within_3_trading_days=abs(trading) <= 3,
+        within_3_trading_days=within_flag,
     )
 
 
