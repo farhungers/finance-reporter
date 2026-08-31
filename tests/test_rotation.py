@@ -28,8 +28,11 @@ def test_commodity_anchor_appears_in_prompt():
         calendar_summary="(none)",
         knowledge_context="",
         suggested_commodity=trades._suggested_commodity("2026-08-19"),
+        suggested_crypto=trades._suggested_crypto("2026-08-19"),
     )
     assert "COMMODITY ROTATION ANCHOR: COPPER" in body
+    # 2026-08-31: crypto rotation added — verify it's rendered too.
+    assert "CRYPTO ROTATION ANCHOR: SOL" in body  # Wed anchor
 
 
 def test_pitch_prompt_excludes_recent_tickers():

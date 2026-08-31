@@ -147,7 +147,7 @@ Examples that are 0 on the named factor:
 
 
 # Weekday → suggested commodity anchor. Breaks the observed "always GOLD"
-# pattern (11/11 commodity trades were GOLD long mean-reversion, 0 TP, all SL).
+# pattern (12/23 commodity trades were GOLD as of 2026-08-31).
 # The LLM may deviate — §C11 never-omit + a genuinely stronger setup elsewhere
 # — but the anchor moves the base case so we sample the full commodity space
 # across the week instead of one instrument, one playbook.
@@ -159,6 +159,17 @@ _COMMODITY_DOW = {
     4: "NAT_GAS",    # Friday
 }
 
+# Same idea for crypto. Data through 2026-08-31: 23/24 crypto trades were BTC,
+# 1 ETH. Weekday rotation gives ETH/SOL exposure and prevents the LLM from
+# defaulting to BTC-breakout-retest as its only crypto template.
+_CRYPTO_DOW = {
+    0: "BTC",        # Monday
+    1: "ETH",        # Tuesday
+    2: "SOL",        # Wednesday
+    3: "BTC",        # Thursday (BTC 2× since it's the anchor asset)
+    4: "ETH",        # Friday
+}
+
 
 def _suggested_commodity(date_ist: str) -> str:
     try:
@@ -166,6 +177,54 @@ def _suggested_commodity(date_ist: str) -> str:
     except Exception:
         return "GOLD"
     return _COMMODITY_DOW.get(d.weekday(), "GOLD")
+
+
+def _suggested_crypto(date_ist: str) -> str:
+    try:
+        d = date.fromisoformat(date_ist)
+    except Exception:
+        return "BTC"
+    return _CRYPTO_DOW.get(d.weekday(), "BTC")
+
+
+# Concentration policy: if the same asset has filled the slot ≥3 of the last 5
+# sessions, FORCE the weekday anchor for today. Overrides the LLM per §C11
+# (never-omit still holds — a concentrated slot IS a form of gap in setup
+# variety). Data justifying this: 100% BTC / 52% GOLD in the crypto/commodity
+# slots over 24/23 resolved trades = zero rotation despite a soft anchor.
+_CONCENTRATION_WINDOW = 5
+_CONCENTRATION_THRESHOLD = 3
+
+
+def _recent_slot_asset(asset_class: str) -> list[str]:
+    """Return uppercase asset_symbols for the last N trades in this slot,
+    newest-first. Read-only DB access."""
+    with db.connect() as conn:
+        rows = conn.execute(
+            """SELECT asset_symbol FROM trades
+               WHERE asset_class = ?
+               ORDER BY generated_at DESC LIMIT ?""",
+            (asset_class, _CONCENTRATION_WINDOW),
+        ).fetchall()
+    return [r["asset_symbol"].upper() for r in rows]
+
+
+def _concentration_forced_symbol(
+    asset_class: str, chosen: str, anchor: str
+) -> Optional[str]:
+    """If `chosen` would push the slot into ≥threshold of last-window same-asset,
+    return `anchor` (the forced substitution). Otherwise None (accept LLM pick).
+
+    Same-asset counting includes today's chosen symbol so a 3rd consecutive BTC
+    (with 2 in history) trips the guard immediately.
+    """
+    if chosen.upper() == anchor.upper():
+        return None  # anchor already; no substitution needed
+    recent = _recent_slot_asset(asset_class)
+    same_count = sum(1 for s in recent if s == chosen.upper()) + 1  # +1 for today
+    if same_count >= _CONCENTRATION_THRESHOLD:
+        return anchor
+    return None
 
 
 # 2026-08-31 calibration: LLM placed COP (ConocoPhillips equity) into the
@@ -218,6 +277,7 @@ def _build_user_prompt(
     calendar_summary: str,
     knowledge_context: str,
     suggested_commodity: str,
+    suggested_crypto: str,
     recent_reasoning_snippets: Optional[list[str]] = None,
 ) -> str:
     if recent_reasoning_snippets:
@@ -242,10 +302,13 @@ TODAY'S CALENDAR (IST):
 {novelty_block}
 
 COMMODITY ROTATION ANCHOR: {suggested_commodity}
-(Default to this commodity today unless a materially stronger setup exists in
-another commodity. Rotation exists to prevent single-instrument, single-playbook
-concentration — data through 2026-08-13 showed 100% SL hit rate on 11 straight
-GOLD-long mean-reversion trades. Deviate only when justified.)
+CRYPTO ROTATION ANCHOR: {suggested_crypto}
+(Default to these anchors today unless a materially stronger setup exists in
+another commodity/crypto. Rotation exists to prevent single-instrument,
+single-playbook concentration — data through 2026-08-31: 12/23 commodity
+trades were GOLD, 23/24 crypto trades were BTC. A concentration guard forces
+the anchor whenever the same asset would fill the slot for the 3rd time in
+5 sessions.)
 
 Produce exactly 3 trades: 1 commodity, 1 equity, 1 crypto. Per schema.
 """
@@ -326,9 +389,12 @@ def generate(
 
     recent_baselines = novelty.recent_trade_reasoning(days=3)
     recent_snips = novelty.snippets(recent_baselines, max_words=15, cap=3)
+    anchor_commodity = _suggested_commodity(date_ist)
+    anchor_crypto = _suggested_crypto(date_ist)
     user_prompt = _build_user_prompt(
         date_ist, market_snapshot, calendar_summary, kb_ctx,
-        suggested_commodity=_suggested_commodity(date_ist),
+        suggested_commodity=anchor_commodity,
+        suggested_crypto=anchor_crypto,
         recent_reasoning_snippets=recent_snips,
     )
     try:
@@ -385,6 +451,25 @@ def generate(
                 "trade class-integrity STILL wrong after 1 retry: %s — shipping anyway per §C11",
                 still_wrong,
             )
+
+    # 2026-08-31 concentration guard: if the same asset would fill the slot
+    # for the 3rd time in 5 sessions, FORCE the weekday anchor. Runs after
+    # class-integrity so we don't try to force a valid anchor onto an
+    # invalid-class slot. Overrides the LLM's asset_symbol only — direction,
+    # reasoning, rubric booleans preserved (they'll get audited downstream).
+    for klass, anchor in (("commodity", anchor_commodity), ("crypto", anchor_crypto)):
+        if klass not in raw:
+            continue
+        chosen = raw[klass].get("asset_symbol", "").upper()
+        forced = _concentration_forced_symbol(klass, chosen, anchor)
+        if forced:
+            log.warning(
+                "trade %s concentration guard: %s forced to anchor %s "
+                "(≥%d of last %d sessions were %s)",
+                klass, chosen, forced,
+                _CONCENTRATION_THRESHOLD, _CONCENTRATION_WINDOW, chosen,
+            )
+            raw[klass]["asset_symbol"] = forced
 
     trades: list[Trade] = []
     for klass in ("commodity", "equity", "crypto"):
