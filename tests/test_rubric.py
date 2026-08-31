@@ -120,3 +120,114 @@ def test_both_audits_can_downgrade_stars_to_three():
     assert r.breakdown["macro_alignment"] == 0
     assert r.breakdown["base_rate_support"] == 0
     assert r.stars == 3
+
+
+# --- Rubric v1.2 audit tests (2026-08-31 calibration) --------------------
+
+def test_technical_setup_kept_when_reasoning_cites_level_near_entry():
+    """Reasoning naming a price level within 1×ATR of entry passes the audit."""
+    b = _all_true()
+    r = score(
+        b, direction="long", spot=100.0, ma20=100.0,
+        reasoning_text="breakout retest of 100.5 swing high — 2024 analog",
+        entry=100.0, tp=104.0, sl=98.0, atr=2.0,
+    )
+    assert r.breakdown["technical_setup"] == 1
+
+
+def test_technical_setup_downgraded_when_reasoning_names_no_level():
+    """Reasoning with only MA-period tokens (20d, 200d) fails — those aren't levels."""
+    b = _all_true()
+    r = score(
+        b, direction="long", spot=100.0, ma20=100.0,
+        reasoning_text="long above 200-day MA — Q4 2024 analog",
+        entry=100.0, tp=104.0, sl=98.0, atr=2.0,
+    )
+    assert r.breakdown["technical_setup"] == 0
+
+
+def test_technical_setup_downgraded_when_cited_level_too_far():
+    """A level >1×ATR from entry doesn't count — LLM cited a level not near price."""
+    b = _all_true()
+    r = score(
+        b, direction="long", spot=100.0, ma20=100.0,
+        reasoning_text="breakout at 130 support — 2024 analog",
+        entry=100.0, tp=104.0, sl=98.0, atr=2.0,
+    )
+    assert r.breakdown["technical_setup"] == 0
+
+
+def test_technical_setup_year_not_mistaken_for_level():
+    """Year 2024 near entry $2020 must not be counted as a price level."""
+    b = _all_true()
+    r = score(
+        b, direction="long", spot=2020.0, ma20=2000.0,
+        reasoning_text="mirrors the 2024 setup",  # only year, no real level
+        entry=2020.0, tp=2100.0, sl=1980.0, atr=20.0,
+    )
+    assert r.breakdown["technical_setup"] == 0
+
+
+def test_technical_setup_unchanged_when_atr_unavailable():
+    """Audit degrades gracefully when we can't measure — trust LLM boolean."""
+    b = _all_true()
+    r = score(
+        b, direction="long", spot=100.0, ma20=100.0,
+        reasoning_text="just vibes — 2024 analog",
+        entry=100.0, tp=104.0, sl=98.0, atr=None,
+    )
+    assert r.breakdown["technical_setup"] == 1
+
+
+def test_risk_reward_computed_from_prices_overrides_llm_true():
+    """LLM says TRUE but actual R:R = 1.5 — Python forces FALSE."""
+    b = _all_true()
+    r = score(
+        b, direction="long", spot=100.0, ma20=100.0,
+        reasoning_text="2024 analog, breakout at 100.5",
+        entry=100.0, tp=103.0, sl=98.0, atr=2.0,  # reward=3, risk=2 → R:R=1.5
+    )
+    assert r.breakdown["risk_reward"] == 0
+
+
+def test_risk_reward_computed_from_prices_overrides_llm_false():
+    """LLM says FALSE but actual R:R = 2.5 — Python forces TRUE."""
+    b = _all_true()
+    b["risk_reward"] = False
+    r = score(
+        b, direction="long", spot=100.0, ma20=100.0,
+        reasoning_text="2024 analog, breakout at 100.5",
+        entry=100.0, tp=105.0, sl=98.0, atr=2.0,  # reward=5, risk=2 → R:R=2.5
+    )
+    assert r.breakdown["risk_reward"] == 1
+
+
+def test_risk_reward_short_direction_computed_correctly():
+    """Short: risk = sl-entry, reward = entry-tp."""
+    b = _all_true()
+    r = score(
+        b, direction="short", spot=100.0, ma20=100.0,
+        reasoning_text="2024 breakdown analog, resistance at 100.2",
+        entry=100.0, tp=95.0, sl=102.0, atr=2.0,  # reward=5, risk=2 → R:R=2.5
+    )
+    assert r.breakdown["risk_reward"] == 1
+
+
+def test_risk_reward_unchanged_when_no_prices_supplied():
+    """Pitches path: no entry/tp/sl — LLM boolean preserved."""
+    b = _all_true()
+    b["risk_reward"] = True
+    r = score(b, direction="long", spot=100.0, ma20=100.0, reasoning_text="2024 analog")
+    assert r.breakdown["risk_reward"] == 1
+
+
+def test_risk_reward_invalid_prices_leaves_llm_boolean():
+    """SL on wrong side of entry → computation invalid → LLM boolean preserved."""
+    b = _all_true()
+    r = score(
+        b, direction="long", spot=100.0, ma20=100.0,
+        reasoning_text="2024 analog, entry at 100.5",
+        entry=100.0, tp=105.0, sl=101.0, atr=2.0,  # long but sl > entry
+    )
+    # LLM said TRUE, invalid prices → preserved
+    assert r.breakdown["risk_reward"] == 1

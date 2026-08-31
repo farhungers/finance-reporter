@@ -6,13 +6,19 @@ Rubric v1.1 (2026-08-18 calibration; §C5 authorized after n=22 resolved in 4★
 bucket): factor NAMES remain locked per §C4, but Python now VERIFIES the LLM's
 booleans against objective criteria and downgrades on mismatch.
 
-Prior data (n=35 resolved trades) showed macro_alignment TRUE→12% TP vs FALSE
-→40%, and base_rate_support TRUE→9% vs FALSE→38% — the LLM was setting both
-TRUE indiscriminately. Verification closes those cheats:
-  • macro_alignment=TRUE requires direction agreeing with 20d trend
-    (else Python forces FALSE regardless of LLM claim)
-  • base_rate_support=TRUE requires a nameable analog — a year/date-anchored
-    reference in the one_line_reasoning or thesis (else forced FALSE)
+v1.1 (Aug 2026): macro_alignment + base_rate_support gained trend/analog audits.
+
+v1.2 (2026-08-31 calibration; §C5 authorized after n=55 resolved trades): the
+two remaining LLM-authored factors (technical_setup, risk_reward) were ON for
+100% of trades and lost all discrimination power. Data:
+  • 5★ trades avg −0.50R, 4★ avg −0.37R, 2★ avg +0.02R — star rating INVERTED
+  • technical_setup, risk_reward: never OFF in 55 resolved trades → dead
+Audits added:
+  • technical_setup=TRUE requires the reasoning to name a specific numeric
+    level within 1×ATR of entry (else forced FALSE)
+  • risk_reward is now OBJECTIVELY computed from entry/tp/sl/direction when
+    those are supplied — LLM boolean overridden either way. TRUE iff actual
+    R:R ≥ 2.0, else FALSE
 """
 from __future__ import annotations
 
@@ -39,6 +45,62 @@ _ANALOG_ANCHOR = re.compile(
     r"|\bpost[- ](?:cpi|fomc|nfp|opec|ecb|boe)\b",
     re.IGNORECASE,
 )
+
+# v1.2 audit for technical_setup: reasoning must name a numeric price level
+# within 1×ATR of the (grounded) entry. Extracts ints and decimals; skips
+# 4-digit integers 1900-2099 that are almost always analog years, not price
+# levels. Also skips small integers ≤50 that are typically MA periods (20d,
+# 50d, 200d) rather than actual levels.
+_NUMERIC_TOKEN = re.compile(r"\b\d+(?:[.,]\d+)?\b")
+
+
+def _reasoning_names_level(
+    reasoning: str, entry: Optional[float], atr: Optional[float]
+) -> bool:
+    """True iff reasoning cites a number within 1×ATR of entry.
+
+    Filters:
+      • Years 1900-2099 as bare 4-digit ints — analog anchors, not levels.
+      • Small ints ≤50 with no decimal — MA periods (20d, 200d) not levels.
+    """
+    if not reasoning or entry is None or entry <= 0 or atr is None or atr <= 0:
+        return False
+    for tok in _NUMERIC_TOKEN.findall(reasoning):
+        try:
+            n = float(tok.replace(",", ""))
+        except ValueError:
+            continue
+        is_int = n == int(n)
+        if is_int and 1900 <= n <= 2099:
+            continue  # year, not a price level
+        if is_int and n <= 50:
+            continue  # MA period token (20d, 50d, 200d)
+        if abs(n - entry) <= atr:
+            return True
+    return False
+
+
+def _computed_rr(
+    direction: Optional[str],
+    entry: Optional[float],
+    tp: Optional[float],
+    sl: Optional[float],
+) -> Optional[float]:
+    """Objective R:R from grounded entry/tp/sl. None if any input missing or invalid."""
+    if entry is None or tp is None or sl is None or not direction:
+        return None
+    d = direction.lower()
+    if d == "long":
+        risk = entry - sl
+        reward = tp - entry
+    elif d == "short":
+        risk = sl - entry
+        reward = entry - tp
+    else:
+        return None
+    if risk <= 0 or reward <= 0:
+        return None
+    return reward / risk
 
 
 @dataclass(frozen=True)
@@ -69,6 +131,10 @@ def score(
     spot: Optional[float] = None,
     ma20: Optional[float] = None,
     reasoning_text: str = "",
+    entry: Optional[float] = None,
+    tp: Optional[float] = None,
+    sl: Optional[float] = None,
+    atr: Optional[float] = None,
 ) -> RubricResult:
     """Convert LLM-supplied booleans into a 0-5 star rating with Python audits.
 
@@ -77,12 +143,17 @@ def score(
     - If earnings_within_3d is True, catalyst_proximity is forced to 1
       regardless of LLM output (CLAUDE.md §D.8, §E.21).
 
-    Audits (§C5 calibration, rubric v1.1):
+    Audits:
+      v1.1 (§C5, 2026-08-18):
       • macro_alignment=1: if direction+trend data supplied, verify direction
         agrees with 20d MA. Mismatch → forced 0.
       • base_rate_support=1: reasoning_text must contain a dated analog
-        anchor (year, month+year, quarter, or a "post-EVENT" phrase).
-        Missing → forced 0.
+        anchor. Missing → forced 0.
+      v1.2 (§C5, 2026-08-31):
+      • technical_setup=1: reasoning must cite a numeric level within 1×ATR
+        of entry (when entry+atr supplied). Missing → forced 0.
+      • risk_reward: when entry+tp+sl+direction supplied, compute actual R:R
+        and OVERRIDE the LLM boolean. TRUE iff computed R:R ≥ 2.0.
     """
     breakdown: dict[str, int] = {}
     for f in FACTORS:
@@ -100,6 +171,24 @@ def score(
     if breakdown["base_rate_support"] == 1 and reasoning_text:
         if not _ANALOG_ANCHOR.search(reasoning_text):
             breakdown["base_rate_support"] = 0
+
+    # v1.2 audit: technical_setup requires a cited level near entry.
+    # Only fires when we have grounded entry + ATR to measure against.
+    if (
+        breakdown["technical_setup"] == 1
+        and entry is not None
+        and atr is not None
+        and atr > 0
+    ):
+        if not _reasoning_names_level(reasoning_text, entry, atr):
+            breakdown["technical_setup"] = 0
+
+    # v1.2 audit: risk_reward is objectively computed when trade prices supplied.
+    # Overrides LLM boolean in both directions — LLM claim is irrelevant when
+    # we can measure R:R directly. Skipped for pitches (no entry/tp/sl).
+    rr = _computed_rr(direction, entry, tp, sl)
+    if rr is not None:
+        breakdown["risk_reward"] = 1 if rr >= 2.0 else 0
 
     if earnings_within_3d:
         breakdown["catalyst_proximity"] = 1

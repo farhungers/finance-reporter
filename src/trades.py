@@ -289,15 +289,11 @@ def generate(
         )
         for note in snap_notes:
             log.info("trade %s %s ground_prices: %s", klass, sym, note)
-        # Since Python now enforces ATR-sized SL + R:R ≥ 2:1, force risk_reward=1
-        # when we successfully re-anchored (any "atr_sized" note). This prevents
-        # the LLM from tanking the star rating with a conservative FALSE after
-        # we already ensured the constraint.
+        # v1.2: rubric.score() now computes risk_reward objectively from
+        # entry/tp/sl — no need to pre-set the LLM boolean. Also passes
+        # atr for the technical_setup level-citation audit.
         rubric_in = dict(t["rubric"])
-        if any(n.startswith("atr_sized") for n in snap_notes):
-            rubric_in["risk_reward"] = True
-        # Rubric v1.1 audit inputs: trend (ma20) verifies macro_alignment;
-        # reasoning text is scanned for a dated analog anchor for base_rate_support.
+        atr = market_data.atr14(sym, klass)
         rs = rubric.score(
             rubric_in,
             earnings_within_3d=False,
@@ -305,6 +301,10 @@ def generate(
             spot=market_data.latest_price(sym, klass),
             ma20=market_data.ma20(sym, klass),
             reasoning_text=t.get("one_line_reasoning", ""),
+            entry=entry,
+            tp=tp,
+            sl=sl,
+            atr=atr,
         )
         low_warn = t.get("low_star_warning") if rs.stars <= 1 else None
         reasoning = t["one_line_reasoning"].strip()
