@@ -268,6 +268,32 @@ The Python layer will:
 """
 
 
+def _trim_knowledge_to_budget(
+    chunks: dict[str, str], budget_chars: int
+) -> dict[str, str]:
+    """Drop knowledge chunks (largest first) until the concatenated body fits
+    under `budget_chars`. Chunks are inserted in load order; this preserves
+    ticker facts + active_themes (loaded first, small) and preferentially drops
+    the macro playbook (loaded last, largest — 4-8KB). Warns on each drop so
+    operator sees the trim in logs. Returns a filtered dict."""
+    total = sum(len(body) for body in chunks.values())
+    if total <= budget_chars:
+        return chunks
+    # Sort by size DESC — drop biggest first (macro playbook usually)
+    by_size = sorted(chunks.items(), key=lambda kv: -len(kv[1]))
+    kept = dict(chunks)
+    for sid, body in by_size:
+        if total <= budget_chars:
+            break
+        log.warning(
+            "knowledge trim: dropping %s (%d chars) to fit Groq 8K TPM budget",
+            sid, len(body),
+        )
+        del kept[sid]
+        total -= len(body)
+    return kept
+
+
 _COOLDOWN_SESSIONS = 5   # skip any ticker picked in the last N daily_morning reports
 
 
@@ -446,6 +472,14 @@ def generate(
         report_type, tickers=ticker_sample,
         todays_event_names=todays_us_3star_events,
     )
+    # 2026-09-01 defensive trim: Groq's 8K TPM ceiling counts prompt +
+    # max_completion_tokens (currently 1800 reserved). Ceiling for the prompt
+    # is ~5700 tokens; ~17100 chars at ~3 chars/token (conservative). If the
+    # loaded knowledge blob would push us over, drop the largest chunk first
+    # (usually the macro playbook, ~4-8KB). Ticker facts + active_themes are
+    # kept — they're smaller and higher-signal for pitch generation. Prevents
+    # the 413 that killed the 2026-09-01 00:03 UTC run.
+    kb = _trim_knowledge_to_budget(kb, budget_chars=17000)
     kb_ctx = knowledge.build_context_block(kb)
 
     # Pre-compute EARNINGS_WITHIN_3D flags for the ticker sample so the LLM sees
