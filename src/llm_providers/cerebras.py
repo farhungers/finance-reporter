@@ -1,10 +1,11 @@
-"""Cerebras Cloud provider — llama-3.3-70b on the free tier.
+"""Cerebras Cloud provider — gpt-oss-120b on the free tier.
 
 Positioned as a config-swap fallback for Groq. Same OpenAI-compatible chat API
 shape, but Cerebras' free tier does not share Groq's 8K TPM per-org cap that
-forced 10+ commits of prompt-trimming firefighting on 2026-08-18. Model is the
-same size class (70b vs Groq's downgraded 20b), which lifts thesis-prose quality
-back where the rubric was calibrated.
+forced 10+ commits of prompt-trimming firefighting on 2026-08-18. Model is
+gpt-oss-120b — the 120B version of the same family as Groq's downgraded 20b —
+so it handles nested schemas that gpt-oss-20b intermittently botches (the
+alphabetical-key/dropped-field bug that surfaced 2026-09-01).
 
 Switch with `LLM_PROVIDER=cerebras` + `CEREBRAS_API_KEY` set. Zero recurring
 cost — free tier is generous enough for the 12 sends/week the bot produces.
@@ -13,6 +14,15 @@ Structured output uses JSON-object mode with the schema pasted into the system
 prompt. Cerebras also advertises strict json_schema mode; we can adopt that
 later if json_object mode drifts, but the schema-in-prompt path is what Groq
 used pre-strict-mode and worked fine at this scale.
+
+Model history (2026-09-01):
+  • llama-3.3-70b — was Cerebras' free-tier default at 2026-08-18 memory time.
+    Confirmed removed: models.list() now returns only gemma-4-31b + gpt-oss-120b.
+  • gpt-oss-120b — 402 payment_required on the free tier. Blocked by the LOCKED
+    zero-paid-services rule.
+  • gemma-4-31b (current) — Google's Gemma 4 31B, free on Cerebras. Different
+    model family than Groq's gpt-oss-20b so failover gives us genuinely
+    independent schema-handling behavior.
 """
 from __future__ import annotations
 
@@ -24,7 +34,7 @@ from src.llm_providers.base import GenerateResult, Provider
 
 log = logging.getLogger(__name__)
 
-_MODEL_NAME = "llama-3.3-70b"
+_MODEL_NAME = "gemma-4-31b"
 
 
 def _schema_hint(schema: dict[str, Any]) -> str:
