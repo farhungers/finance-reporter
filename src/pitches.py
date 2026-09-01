@@ -473,13 +473,14 @@ def generate(
         todays_event_names=todays_us_3star_events,
     )
     # 2026-09-01 defensive trim: Groq's 8K TPM ceiling counts prompt +
-    # max_completion_tokens (currently 1800 reserved). Ceiling for the prompt
-    # is ~5700 tokens; ~17100 chars at ~3 chars/token (conservative). If the
-    # loaded knowledge blob would push us over, drop the largest chunk first
-    # (usually the macro playbook, ~4-8KB). Ticker facts + active_themes are
-    # kept — they're smaller and higher-signal for pitch generation. Prevents
-    # the 413 that killed the 2026-09-01 00:03 UTC run.
-    kb = _trim_knowledge_to_budget(kb, budget_chars=17000)
+    # max_completion_tokens (2500 reserved). System prompt is ~2400 tokens
+    # (~6500 chars), user-frame ~800 tokens, so knowledge budget is ~2200
+    # tokens ≈ 6600 chars at ~3 chars/token. 8000-char cap accepts one
+    # ticker fact (~3300) + active_themes (~700) + a small macro playbook
+    # (~3500-4000) OR a big playbook without ticker. Drops largest chunks
+    # first — biggest macro playbooks (bond_liquidity, bear_market) get
+    # trimmed on days they'd apply. Ticker facts + active_themes survive.
+    kb = _trim_knowledge_to_budget(kb, budget_chars=8000)
     kb_ctx = knowledge.build_context_block(kb)
 
     # Pre-compute EARNINGS_WITHIN_3D flags for the ticker sample so the LLM sees

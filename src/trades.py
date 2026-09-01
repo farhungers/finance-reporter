@@ -386,11 +386,12 @@ def generate(
     """Return ([commodity, equity, crypto], token_counts). Persists BEFORE any send."""
     kb = knowledge.load_for_report(report_type, tickers=[])
     # 2026-09-01 defensive trim: Groq's 8K TPM ceiling (see pitches.py header
-    # comment). Trades has no ticker sample but may load a macro playbook +
-    # active themes, and the corrective-retry path APPENDS ~250 tokens more.
-    # 16000-char cap leaves headroom for both retries and max_completion=1800.
+    # comment). Trades has no ticker sample but may load active themes + macro
+    # playbook, and the corrective-retry path APPENDS ~250 tokens more. 6000-
+    # char cap gives ~1800 tokens of knowledge — fits under the cap with room
+    # for the retry appendage and max_completion=2500 reserve.
     from src.pitches import _trim_knowledge_to_budget
-    kb = _trim_knowledge_to_budget(kb, budget_chars=16000)
+    kb = _trim_knowledge_to_budget(kb, budget_chars=6000)
     kb_ctx = knowledge.build_context_block(kb)
 
     recent_baselines = novelty.recent_trade_reasoning(days=3)

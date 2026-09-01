@@ -159,14 +159,16 @@ class GroqProvider(Provider):
                     temperature=0.15,
                     # Explicit output budget — Groq's per-org 8K TPM cap counts
                     # REQUESTED tokens (prompt + max_completion_tokens reserved),
-                    # NOT consumed. 2026-09-01: dropped 2500 → 1800 after a live
-                    # 413 (prompt=6181 + reserve=2500 = 8681 vs 8000 ceiling).
-                    # Prompt drift from macro playbooks + novelty snippets ate
-                    # the old 700-token buffer; 1800 restores it. 2 pitches with
-                    # ~500-tok theses = ~1400 tokens out; 1800 fits with headroom.
-                    # Belt-and-suspenders: caller-side knowledge trim in
-                    # pitches.py / trades.py caps prompt at ~5700 tokens.
-                    max_completion_tokens=1800,
+                    # NOT consumed. 2026-09-01 tuning history:
+                    #   1st try: 2500 → 413 (prompt drift ate the buffer)
+                    #   2nd try: 1800 → "max completion tokens reached before
+                    #     generating a valid document" (schema is too complex to
+                    #     complete 2 pitches in 1800 tokens under strict mode)
+                    #   Landing: 2500 restored + AGGRESSIVE prompt trim in
+                    #     pitches.py (knowledge budget 8000 chars ≈ 2700 tokens).
+                    #     Prompt now ~5000 tokens + 2500 reserve = 7500 total,
+                    #     ~500 tokens under the 8000 ceiling.
+                    max_completion_tokens=2500,
                 )
                 text = resp.choices[0].message.content or ""
                 parsed = json.loads(text)
