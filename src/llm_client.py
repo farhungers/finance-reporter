@@ -60,6 +60,12 @@ def _is_failover_eligible(err: Exception) -> bool:
         return True
     if "429" in s or "rate limit" in s or "tokens per minute" in s or "quota" in s:
         return True
+    # 2026-09-01: Groq gpt-oss-20b intermittently returns json_validate_failed
+    # (constrained decoder emits nested-object keys alphabetically and drops a
+    # required field). Cerebras llama-3.3-70b handles nested strict schemas
+    # reliably; fail over rather than ship nothing.
+    if "json_validate_failed" in s:
+        return True
     return False
 
 

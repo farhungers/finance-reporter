@@ -90,7 +90,10 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
           LLM_PROVIDER: groq
+          LLM_AUTO_FAILOVER: 'true'
+          LLM_FALLBACK_PROVIDER: cerebras
           DRY_RUN: 'false'
           KILL_SWITCH_DAILY_MORNING: 'false'
           PYTHONUNBUFFERED: '1'

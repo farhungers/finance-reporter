@@ -145,6 +145,13 @@ class GroqProvider(Provider):
             },
         }
         last_error: Exception | None = None
+        # Vary temperature across retries. 2026-09-01 observation: gpt-oss-20b
+        # in strict mode intermittently emits nested objects with alphabetical
+        # keys instead of schema-required keys, dropping a required field
+        # (thesis, crypto). At low temp all 3 retries produce the same broken
+        # output. Escalating temp gives us a different sample that may satisfy
+        # the schema. Kept modest to preserve calibration discipline.
+        temps = [0.15, 0.4, 0.7]
         for attempt in range(3):
             try:
                 resp = self._client.chat.completions.create(
@@ -154,9 +161,7 @@ class GroqProvider(Provider):
                         {"role": "user", "content": user},
                     ],
                     response_format=response_format,
-                    # Low temperature keeps constrained-decoding stable; some
-                    # thesis-prose variety loss is worth the reliability win.
-                    temperature=0.15,
+                    temperature=temps[attempt],
                     # Explicit output budget — Groq's per-org 8K TPM cap counts
                     # REQUESTED tokens (prompt + max_completion_tokens reserved),
                     # NOT consumed. 2026-09-01 tuning history:
@@ -200,6 +205,18 @@ class GroqProvider(Provider):
                         sleep_s,
                     )
                     time.sleep(sleep_s)
+                    continue
+                # json_validate_failed: strict-mode decoder rejected the model
+                # output. Retry immediately with escalated temp (see temps[]
+                # above) — the same low-temp sample is deterministic-adjacent
+                # and will fail identically. Warn LOUD so silent-failure loop
+                # (per 2026-08-14 incident) can't hide behind repeat failures.
+                is_json_fail = "json_validate_failed" in err_str
+                if is_json_fail and attempt < 2:
+                    log.warning(
+                        "groq json_validate_failed (attempt %d); retrying with temp=%.2f",
+                        attempt + 1, temps[attempt + 1],
+                    )
                     continue
                 log.warning("groq attempt %d failed: %s", attempt + 1, e)
         raise RuntimeError(f"groq failed after retries: {last_error}")

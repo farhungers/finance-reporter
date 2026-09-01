@@ -10,7 +10,7 @@ data/*.db-shm
 data/*.db-wal
 data/backups/
 data/cache/
-.claude/settings.local.json
+.claude/
 *.log
 .pytest_cache/
 .mypy_cache/
