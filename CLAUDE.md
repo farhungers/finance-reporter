@@ -63,7 +63,7 @@ All displayed timestamps in message bodies are **IST** with the ` IST` suffix. S
 
 **D.1.a — Daily Morning (04:00 UTC Mon-Fri = 07:00 IST)**
 
-Length budget: ~1500 tokens of display text (~5 min read).
+Length budget: ~1800 tokens of display text (~6 min read; bumped from 1500 on 2026-09-16 to fit MARKET WIRE section).
 
 Structure (fixed order — do not permute):
 ```
@@ -77,7 +77,22 @@ Structure (fixed order — do not permute):
    Tomorrow's key events: [1-line teaser]
    Big week-ahead events: [1-line if any not yet named]
 
-2. TODAY'S PITCHES — BLUE CHIP
+2. TODAY'S MARKET WIRE — 3 items (news-analysis blocks; added 2026-09-16)
+   ── 1. 🔴🇺🇸 [Lead — one-sentence, dated, quantitative when possible]
+      📉 Significance: [2-3 sentences, precise; applies impact_matrix mechanism
+         to today's tape — no verbatim paste from knowledge chunks]
+      📊 Impact: 💵 USD [+/−/~] · 🥇 Gold [+/−/~] · 📈 Stocks [+/−/~] · ₿ Crypto [+/−/~] · [optional key sector]
+   ── 2. ...
+   ── 3. ...
+
+   Item sourcing (priority order, all free):
+     (a) Today's 3-star calendar events + their forecast/prior deltas
+     (b) Filtered RSS headlines from src/news.py (macro/rates/geopol keywords)
+     (c) yfinance ticker news for pitched-universe tickers
+   Never gap — if fewer than 3 items qualify, ship the best-available with a
+   1-line low-confidence note per §C11.
+
+3. TODAY'S PITCHES — BLUE CHIP
    ── Pitch 1: [SYMBOL] [LONG/SHORT] ⭐⭐⭐⭐☆
       Thesis: [2-3 sentences deep, client-usable]
       [If earnings_within_3d=1: 📅 Earnings [date IST] — [expected direction impact]]
@@ -92,7 +107,7 @@ Structure (fixed order — do not permute):
       Thesis: ...
       ...
 
-3. TODAY'S TRADES — VARIETY
+4. TODAY'S TRADES — VARIETY
    ── Commodity: [SYMBOL] [LONG/SHORT] ⭐⭐⭐☆☆
       Entry: X | TP: Y | SL: Z
       Why: [1 line, precise]
@@ -378,7 +393,7 @@ Daily morning flags any pitch open >10 trading days with no meaningful move: "AA
 11. **Always ship 2 pitches + 3 trades. Never gap. Never substitute across classes.** Low-star (0-1) candidates ship with a `low_star_warning` line. Star rating is the honesty signal; the friend decides whether to use it. (Pitch count revised from 3 → 2 by operator 2026-07-28.)
 12. **"Always surface next-best; never omit."** (§C11 product principle.) Governs all edge cases: quiet calendar day, thin news week, illiquid crypto tape, etc. When in doubt: ship with honest low stars + warning, not silence.
 13. **Style: precise, easy to understand, no jokes.** (§C12.) Applies to warning lines, thesis prose, reasoning notes, weekly recap.
-14. **Length budgets enforced by `test_message_length_budget.py`** — morning ≤ ~1500, wrap ≤ ~400, weekly lookback ≤ ~2000, weekly prep ≤ ~1200, `/stats` reply ≤ ~600 tokens.
+14. **Length budgets enforced by `test_message_length_budget.py`** — morning ≤ ~1800 (bumped 2026-09-16 for MARKET WIRE), wrap ≤ ~400, weekly lookback ≤ ~2000, weekly prep ≤ ~1200, `/stats` reply ≤ ~600 tokens.
 15. **Every report ends with the compliance one-liner.** Not a paragraph — one line.
 16. **Weekend schedule locked: daily reports Mon-Fri only.** 12 total sends/week. No Sat/Sun daily reports.
 17. **Star visual convention locked (§C14).** `stars.render()` is the single source of truth; every star display uses it. 5/5 renders as gold star 🌟.

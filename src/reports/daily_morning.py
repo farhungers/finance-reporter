@@ -13,7 +13,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from src import calendar_source, company_names, config, db, event_explanations, market_data, news, pitches, stars, telegram_send, trades
+from src import calendar_source, company_names, config, db, event_explanations, market_data, market_wire, news, pitches, stars, telegram_send, trades
 from src.reports._style import (
     CLASS_ICON as _CLASS_ICON,
     COUNTRY_FLAG as _COUNTRY_FLAG,
@@ -115,6 +115,43 @@ def _macro_focus_line(us_event_names: list[str]) -> str | None:
 
 
 from src.reports._style import levels_table as _levels_block  # noqa: E402
+
+
+# Impact-direction glyphs — visually distinct from the ± ASCII characters and
+# render consistently on iOS/Android Telegram. Kept short so the impact line
+# stays scannable on mobile.
+_IMPACT_GLYPH: dict[str, str] = {
+    "+": "🟢",   # positive impact
+    "-": "🔴",   # negative impact
+    "~": "⚪",   # mixed / neutral
+}
+
+
+def _wire_block(items: list[market_wire.WireItem]) -> str:
+    """Render the MARKET WIRE section (§D.1.a #2). One card per item:
+    Lead line (emoji + flag + headline) → Significance → Impact directions.
+    All dynamic content escaped for MDv2."""
+    if not items:
+        return "_No wire items available today\\._"
+    cards: list[str] = []
+    for i, it in enumerate(items, 1):
+        flag = market_wire.country_flag(it.country_code)
+        lead = (
+            f"*{i}\\.*  {it.lead_emoji}{flag}  *{esc(it.headline)}*"
+        )
+        sig = f"📉 _Significance:_ {esc(it.significance)}"
+        # Impact line: USD · Gold · Stocks · Crypto · [optional sector]
+        imp_bits = [
+            f"💵 USD {_IMPACT_GLYPH[it.impact_usd]}",
+            f"🥇 Gold {_IMPACT_GLYPH[it.impact_gold]}",
+            f"📈 Stocks {_IMPACT_GLYPH[it.impact_stocks]}",
+            f"₿ Crypto {_IMPACT_GLYPH[it.impact_crypto]}",
+        ]
+        if it.key_sector:
+            imp_bits.append(f"_{esc(it.key_sector)}_")
+        imp = "📊 _Impact:_  " + "  ·  ".join(imp_bits)
+        cards.append("\n".join([lead, sig, imp]))
+    return f"\n{_MINI}\n".join(cards)
 
 
 def _pitch_block(pl: list[pitches.Pitch]) -> str:
@@ -283,6 +320,15 @@ def generate(now: Optional[datetime] = None) -> tuple[str, dict]:
     )
     trades_list, ttok = trades.generate(date_ist, market_snap, cal_llm)
 
+    # MARKET WIRE — 3 news-analysis blocks (§D.1.a #2, added 2026-09-16).
+    # Best-effort: never gap the report on wire failure — log LOUD, ship empty
+    # wire section rather than fail the whole morning briefing (§C11).
+    try:
+        wire_list, wtok = market_wire.generate(date_ist, events, market_snap)
+    except Exception as e:
+        log.error("market_wire generation failed — shipping report without wire section: %s", e)
+        wire_list, wtok = [], {"tokens_in": 0, "tokens_out": 0}
+
     calendar_block = _calendar_block(events, date_ist)
 
     # Tomorrow / week-ahead teasers — 3-star only
@@ -315,12 +361,17 @@ def generate(now: Optional[datetime] = None) -> tuple[str, dict]:
         f"📆 _Tomorrow:_ {esc(tomorrow_line)}",
         "",
         _HR,
-        f"💼  *SECTION 2 · PITCHES*  _· Blue chip · 2 ideas_",
+        f"📰  *SECTION 2 · MARKET WIRE*  _· 3 stories · cross\\-asset impact_",
+        _HR,
+        _wire_block(wire_list),
+        "",
+        _HR,
+        f"💼  *SECTION 3 · PITCHES*  _· Blue chip · 2 ideas_",
         _HR,
         _pitch_block(pitches_list),
         "",
         _HR,
-        f"⚡  *SECTION 3 · TRADES*  _· 1 commodity · 1 stock · 1 crypto_",
+        f"⚡  *SECTION 4 · TRADES*  _· 1 commodity · 1 stock · 1 crypto_",
         _HR,
         _trade_block(trades_list),
         "",
@@ -331,7 +382,7 @@ def generate(now: Optional[datetime] = None) -> tuple[str, dict]:
     body = "\n".join(body_lines)
 
     telemetry = {
-        "llm_tokens_in": ptok["tokens_in"] + ttok["tokens_in"],
-        "llm_tokens_out": ptok["tokens_out"] + ttok["tokens_out"],
+        "llm_tokens_in": ptok["tokens_in"] + ttok["tokens_in"] + wtok["tokens_in"],
+        "llm_tokens_out": ptok["tokens_out"] + ttok["tokens_out"] + wtok["tokens_out"],
     }
     return body, telemetry

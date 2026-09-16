@@ -31,6 +31,8 @@ class DummyProvider(Provider):
 
         if {"pitch_1", "pitch_2"} <= req:
             parsed = _dummy_pitches()
+        elif {"item_1", "item_2", "item_3"} <= req:
+            parsed = _dummy_wire()
         elif {"commodity", "equity", "crypto"} <= req:
             parsed = _dummy_trades()
         elif "one_line_summary" in req:
@@ -170,6 +172,64 @@ def _dummy_trades() -> dict:
             },
             "low_star_warning": "Chart-only setup with weak R/R and no macro tailwind; shipping to keep class slot filled — trader may skip.",
             "knowledge_sources_used": [],
+        },
+    }
+
+
+def _dummy_wire() -> dict:
+    """3 wire items — structural placeholder for pilot dry-runs."""
+    return {
+        "item_1": {
+            "country_code": "US",
+            "lead_emoji": "🔴",
+            "headline": "The 30-year US Treasury yield hit 5.35%, its highest since June 2007.",
+            "significance": (
+                "Higher long-end yields reflect market concerns about rising government "
+                "debt burdens and long-term inflation. Rates at pre-financial-crisis levels "
+                "raise borrowing and mortgage costs and pressure valuations on high-multiple "
+                "equities via a higher discount rate."
+            ),
+            "impact_usd": "+",
+            "impact_gold": "-",
+            "impact_stocks": "-",
+            "impact_crypto": "-",
+            "key_sector": "Real Estate −−",
+            "knowledge_sources_used": ["knowledge/macro/impact_matrix.md"],
+        },
+        "item_2": {
+            "country_code": "US",
+            "lead_emoji": "🟡",
+            "headline": "August CPI prints at 08:30 ET; consensus 0.3% MoM headline, 0.3% core.",
+            "significance": (
+                "A hotter print extends the Fed's hold and lifts real yields further. "
+                "A cooler print reopens the September cut debate and eases the discount-rate "
+                "pressure on growth multiples."
+            ),
+            "impact_usd": "~",
+            "impact_gold": "~",
+            "impact_stocks": "~",
+            "impact_crypto": "~",
+            "key_sector": "Tech Growth",
+            "knowledge_sources_used": [
+                "knowledge/macro/impact_matrix.md",
+                "knowledge/macro/cpi_playbook.md",
+            ],
+        },
+        "item_3": {
+            "country_code": "GLOBAL",
+            "lead_emoji": "🟡",
+            "headline": "Brent crude up 2.4% overnight on tightening OPEC+ export data.",
+            "significance": (
+                "Supply-side move rather than demand — reads through to inflation expectations "
+                "rather than a growth signal. Energy sector benefits; transports and consumer "
+                "discretionary face margin pressure if sustained above $92."
+            ),
+            "impact_usd": "~",
+            "impact_gold": "+",
+            "impact_stocks": "-",
+            "impact_crypto": "~",
+            "key_sector": "Energy ++",
+            "knowledge_sources_used": ["knowledge/macro/impact_matrix.md"],
         },
     }
 

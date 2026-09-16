@@ -5,7 +5,8 @@ The tests assemble reports with realistic-max content and assert body length
 stays under the char budget derived from each report's token cap.
 
 Budgets (from §E.14):
-  daily_morning:     ≤ ~1500 tokens display  → char limit ~6500
+  daily_morning:     ≤ ~1800 tokens display  → char limit ~7800
+                     (bumped 2026-09-16 from 1500 for MARKET WIRE section)
   daily_wrap:        ≤ ~400 tokens           → char limit ~1800
   weekly_lookback:   ≤ ~2000 tokens          → char limit ~8500
   weekly_prep:       ≤ ~1200 tokens          → char limit ~5200
@@ -14,12 +15,14 @@ Budgets (from §E.14):
 Prior to 2026-08-03 this file only exposed the budget dict — no actual length
 enforcement. §E.14 says "budgets enforced by this test", so it now does.
 """
-from src import calendar_source, pitches, trades
-from src.reports.daily_morning import _calendar_block, _pitch_block, _trade_block
+from src import calendar_source, market_wire, pitches, trades
+from src.reports.daily_morning import (
+    _calendar_block, _pitch_block, _trade_block, _wire_block,
+)
 
 
 BUDGETS_CHARS = {
-    "daily_morning": 6500,
+    "daily_morning": 7800,
     "daily_wrap": 1800,
     "weekly_lookback": 8500,
     "weekly_prep": 5200,
@@ -112,20 +115,51 @@ def _big_events(date_ist: str, n: int = 6) -> list[calendar_source.CalendarEvent
     ]
 
 
+def _big_wire_items(n: int = 3) -> list[market_wire.WireItem]:
+    """Maximally-sized wire items — long headlines, dense significance,
+    all cross-asset directions populated + key sector."""
+    return [
+        market_wire.WireItem(
+            country_code="US",
+            lead_emoji="🔴",
+            headline=(
+                f"The 30-year US Treasury yield hit 5.35%, its highest since "
+                f"June 2007, on {i}th consecutive session of foreign selling."
+            ),
+            significance=(
+                "This matters because higher real yields raise the discount "
+                "rate on future cash flows, compressing growth multiples "
+                "first (Nasdaq > S&P). With DXY firm and VIX calm, the flow "
+                "is orderly rotation from duration equities into banks and "
+                "value, not a broad risk-off event."
+            ),
+            impact_usd="+",
+            impact_gold="-",
+            impact_stocks="-",
+            impact_crypto="-",
+            key_sector="Real Estate −−",
+            knowledge_sources_used=["knowledge/macro/impact_matrix.md"],
+        )
+        for i in range(1, n + 1)
+    ]
+
+
 def test_daily_morning_layout_under_budget():
-    """Assemble maximally-sized calendar + 2 pitches + 3 trades and verify total
-    body length stays under the daily_morning char budget."""
+    """Assemble maximally-sized calendar + wire + 2 pitches + 3 trades and
+    verify total body length stays under the daily_morning char budget."""
     events = _big_events("2026-08-04", n=6)
     pl = [_big_pitch("AAPL", with_earnings=True), _big_pitch("MSFT")]
     tl = [_big_trade("GOLD", "commodity"), _big_trade("SPY", "equity"),
           _big_trade("BTC", "crypto")]
+    wire = _big_wire_items(3)
 
     cal = _calendar_block(events, "2026-08-04")
+    wir = _wire_block(wire)
     pit = _pitch_block(pl)
     tra = _trade_block(tl)
 
     # Layout content only (headers/footer add ~500 chars, well under margin)
-    layout_body = "\n\n".join([cal, pit, tra])
+    layout_body = "\n\n".join([cal, wir, pit, tra])
     assert len(layout_body) < BUDGETS_CHARS["daily_morning"], (
         f"daily_morning layout {len(layout_body)} > budget "
         f"{BUDGETS_CHARS['daily_morning']} — reduce content or expand budget"
