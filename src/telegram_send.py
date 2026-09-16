@@ -6,10 +6,17 @@ Two responsibilities:
 
 Every dynamic string interpolated into a report body MUST pass through esc().
 Regression test in tests/test_telegram_escape.py.
+
+Token-in-error defense (2026-09-16): the requests library dumps the full URL
+into HTTPError messages, which for us includes /bot<TOKEN>/sendMessage. Any
+send() failure would leak the bot token to logs / stdout / whatever ate the
+exception. All error-path strings now pass through _redact() so the token
+never reaches the outside.
 """
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 
 import requests
@@ -21,6 +28,20 @@ log = logging.getLogger(__name__)
 # Telegram MarkdownV2 reserved chars per Bot API docs.
 _ESC_CHARS = r"_*[]()~`>#+-=|{}.!\\"
 _ESC_TABLE = str.maketrans({c: "\\" + c for c in _ESC_CHARS})
+
+# Bot token format: <digits>:<35+ url-safe chars>. Matches either the standalone
+# token or its embedded-in-URL /bot<token>/ form. Captures nothing — the whole
+# match is replaced with a fixed sentinel.
+_TOKEN_RE = re.compile(r"\d{6,}:[A-Za-z0-9_-]{20,}")
+
+
+def _redact(s: str) -> str:
+    """Strip any bot token from a string. Called on every error-path log
+    message and re-raised exception text so a send() failure cannot leak the
+    token even if requests / urllib3 embeds it in an HTTPError."""
+    if not s:
+        return s
+    return _TOKEN_RE.sub("<REDACTED_TOKEN>", str(s))
 
 
 def esc(s: str) -> str:
@@ -67,6 +88,23 @@ def send(
         r.raise_for_status()
         result = r.json().get("result", {})
         return result.get("message_id")
+    except requests.HTTPError as e:
+        # requests embeds the failing URL — which contains the bot token — into
+        # HTTPError.__str__. Log the redacted form + Telegram's error body so
+        # the operator can still diagnose without the token leaking.
+        body = ""
+        if e.response is not None:
+            try:
+                body = e.response.text[:400]
+            except Exception:
+                pass
+        log.error(
+            "telegram send failed: status=%s body=%s err=%s",
+            e.response.status_code if e.response is not None else "?",
+            _redact(body),
+            _redact(str(e)),
+        )
+        return None
     except Exception as e:
-        log.error("telegram send failed: %s", e)
+        log.error("telegram send failed: %s", _redact(str(e)))
         return None

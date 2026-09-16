@@ -43,3 +43,44 @@ def test_ticker_symbols_survive():
     # BRK-B has a hyphen (reserved). Ensure it escapes properly.
     out = esc("BRK-B")
     assert out == "BRK\\-B"
+
+
+# --- token-in-error defense (2026-09-16) --------------------------------
+
+def test_redact_strips_bot_token_from_url():
+    """The requests library dumps the sendMessage URL — including the token —
+    into HTTPError messages. _redact() must strip it before we log."""
+    from src.telegram_send import _redact
+    leaky = (
+        "400 Client Error: Bad Request for url: "
+        "https://api.telegram.org/bot8912663833:AAFeSka_c3NayDsU1XP597-fhezvxJty3dc/sendMessage"
+    )
+    out = _redact(leaky)
+    assert "8912663833:AAFeSka_c3NayDsU1XP597-fhezvxJty3dc" not in out
+    assert "<REDACTED_TOKEN>" in out
+    # Rest of the diagnostic string survives so operator can still triage
+    assert "400" in out
+    assert "Bad Request" in out
+
+
+def test_redact_handles_standalone_token():
+    from src.telegram_send import _redact
+    out = _redact("token=1234567890:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijk")
+    assert "1234567890:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijk" not in out
+    assert "<REDACTED_TOKEN>" in out
+
+
+def test_redact_leaves_normal_text_alone():
+    from src.telegram_send import _redact
+    assert _redact("nothing to redact here") == "nothing to redact here"
+    assert _redact("") == ""
+    assert _redact(None) is None
+
+
+def test_redact_does_not_match_plain_numbers():
+    """Regression guard: 6-digit chat IDs and other numeric IDs must NOT
+    match the token pattern (they lack the ':<url-safe-string>' tail)."""
+    from src.telegram_send import _redact
+    out = _redact("chat_id=123456789 posted at 2026-09-16T19:24:27Z")
+    assert "chat_id=123456789" in out
+    assert "REDACTED" not in out
